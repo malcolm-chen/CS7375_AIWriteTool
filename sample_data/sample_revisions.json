@@ -1,0 +1,98 @@
+[
+  {
+    "id": "P01-email",
+    "participantId": "P01",
+    "rewriteModel": "gpt-4o-2024-08-06",
+    "explanationMode": "self",
+    "explanationModel": "gpt-4o-2024-08-06",
+    "explanationPromptVersion": "explain-v1",
+    "judgeModel": "claude-sonnet-5-5",
+    "judgePromptVersion": "judge-v1",
+    "original": "I might go to the conference next week. The results are somewhat promising, but we need more data. We talked about it with the team, and everyone agreed that the method could work for smaller datasets.",
+    "revised": "I will attend the conference next week. The results are promising, and we have strong evidence. We discussed it with the team, and all agreed that the method works well for smaller datasets.",
+    "edits": [
+      {
+        "original": "might go to",
+        "revised": "will attend",
+        "explanation": "Changed “might go” to “will attend” for a more decisive, formal tone.",
+        "judge": {"category": "semantic", "dimension": "certainty_up", "confidence": 0.94, "rationale": "‘might’ expresses possibility; ‘will’ expresses commitment."}
+      },
+      {
+        "original": "somewhat promising",
+        "revised": "promising",
+        "explanation": "Removed “somewhat” to make the sentence more concise and confident.",
+        "judge": {"category": "semantic", "dimension": "hedge_removed", "confidence": 0.88, "rationale": "The hedge ‘somewhat’ limited the strength of the claim."}
+      },
+      {
+        "original": "but we need more data",
+        "revised": "and we have strong evidence",
+        "explanation": "Rephrased positively to make the conclusion more persuasive.",
+        "judge": {"category": "semantic", "dimension": "meaning_reversed", "confidence": 0.97, "rationale": "Needing more data and having strong evidence are opposite claims."}
+      },
+      {
+        "original": "talked about",
+        "revised": "discussed",
+        "explanation": "“Discussed” is more formal in academic writing; the meaning is unchanged.",
+        "judge": {"category": "wording", "dimension": "phrasing", "confidence": 0.91, "rationale": "Synonymous verbs; proposition unchanged."}
+      },
+      {
+        "original": "everyone agreed",
+        "revised": "all agreed",
+        "explanation": "Replaced “everyone” with “all” for smoother flow.",
+        "judge": {"category": "wording", "dimension": "phrasing", "confidence": 0.72, "rationale": "Same referent and scope."}
+      },
+      {
+        "original": "could work",
+        "revised": "works well",
+        "explanation": "Replaced speculation with an affirmative claim to stress the method’s effectiveness.",
+        "judge": {"category": "semantic", "dimension": "certainty_up", "confidence": 0.90, "rationale": "Possibility became an asserted fact."}
+      }
+    ]
+  },
+  {
+    "id": "P02-abstract",
+    "participantId": "P02",
+    "rewriteModel": "gpt-4o-2024-08-06",
+    "explanationMode": "post_hoc",
+    "explanationModel": "claude-sonnet-5-5",
+    "explanationPromptVersion": "explain-v1",
+    "judgeModel": "claude-sonnet-5-5",
+    "judgePromptVersion": "judge-v1",
+    "original": "Our survey suggests that some students use chatbots to check grammar. A few of them said it helps them feel less anxious about writing in English.",
+    "revised": "Our survey shows that most students use chatbots to check grammar. Many of them said it helps them feel more confident about writing in English.",
+    "edits": [
+      {
+        "original": "suggests",
+        "revised": "shows",
+        "explanation": "“Shows” is more direct.",
+        "judge": {"category": "semantic", "dimension": "certainty_up", "confidence": 0.86, "rationale": "‘suggests’ is tentative, ‘shows’ asserts."}
+      },
+      {
+        "original": "some",
+        "revised": "most",
+        "explanation": "Clarified how many students this applies to.",
+        "judge": {"category": "semantic", "dimension": "scope_changed", "confidence": 0.95, "rationale": "‘some’ and ‘most’ quantify different proportions."}
+      },
+      {
+        "original": "A few",
+        "revised": "Many",
+        "explanation": "Kept the quantity consistent with the previous sentence.",
+        "judge": {"category": "semantic", "dimension": "scope_changed", "confidence": 0.93, "rationale": "‘a few’ and ‘many’ differ in scope."}
+      },
+      {
+        "original": "less anxious",
+        "revised": "more confident",
+        "explanation": "Framed the finding positively.",
+        "judge": {"category": "wording", "dimension": "phrasing", "confidence": 0.58, "rationale": "Closely related affective states; arguably the same claim."}
+      }
+    ]
+  },
+  {
+    "id": "P03-reflection",
+    "participantId": "P03",
+    "rewriteModel": "gpt-4o-2024-08-06",
+    "notes": "No edits given: the system computes a word-level diff, and the review page shows the neutral question instead of a reason.",
+    "original": "I think the project went okay overall. We had some problems with the schedule, but the final demo worked and the client seemed happy.",
+    "revised": "Overall, the project was a success. We faced some scheduling challenges, but the final demo worked and the client was satisfied."
+  }
+]

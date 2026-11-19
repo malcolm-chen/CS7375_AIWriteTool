@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Revision review prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#FAFAF7; --surface:#FFFFFF; --ink:#1D2125; --ink-2:#5B6168; --ink-3:#8A9097;
+  --line:#E4E4DE; --line-2:#CFCFC7;
+  --sem-bg:#FBE7EF; --sem-ink:#8A1C47; --sem-line:#C8366F;
+  --word-bg:#E8EBFB; --word-ink:#2E3A8C; --word-line:#6574D8;
+  --plain-bg:#EFEFEA; --plain-line:#8A9097;
+  --ok-bg:#E3F2E8; --ok-ink:#1E6B3D; --ok-line:#3E9A63;
+  --rec:#C42B2B; --rec-bg:#FBE9E9; --focus:#3B5BDB;
+  --serif:"Source Serif 4", Georgia, "Songti SC", serif;
+  --sans:"IBM Plex Sans", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+@media (prefers-color-scheme: dark){:root{
+  color-scheme:dark;
+  --paper:#16181B; --surface:#1E2125; --ink:#E8E9EA; --ink-2:#A9AEB4; --ink-3:#7C8187;
+  --line:#2E3237; --line-2:#43484E;
+  --sem-bg:#4A1A2E; --sem-ink:#F6C6D8; --sem-line:#E0669A;
+  --word-bg:#232A55; --word-ink:#CDD3FA; --word-line:#8B97EA;
+  --plain-bg:#2A2D31; --plain-line:#7C8187;
+  --ok-bg:#173A26; --ok-ink:#BFE6CD; --ok-line:#5BBF83;
+  --rec:#F07070; --rec-bg:#3A1C1C; --focus:#8EA4F5;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.5}
+button,select,input,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+header{display:flex;align-items:center;gap:16px;padding:14px 24px;border-bottom:1px solid var(--line);background:var(--surface);flex-wrap:wrap}
+header h1{font-size:16px;font-weight:500;margin:0;flex:1}
+.legend{display:flex;gap:14px;font-size:13px;color:var(--ink-2)}
+.progress{font-size:13px;color:var(--ink-2)}
+.layout{display:grid;grid-template-columns:minmax(0,1fr);gap:24px;padding:24px;max-width:1360px;margin:0 auto}
+.layout.admin-open{grid-template-columns:minmax(0,1fr) 320px}
+.panes{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+.pane{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px 22px}
+.pane h2{font-size:13px;font-weight:500;color:var(--ink-2);margin:0 0 10px}
+.text{font-family:var(--serif);font-size:18px;line-height:2;margin:0;max-width:62ch}
+.mark{border-radius:3px;padding:1px 2px;cursor:pointer;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.mark.sem{background:var(--sem-bg);color:var(--sem-ink);border-bottom:2px solid var(--sem-line)}
+.mark.word{background:var(--word-bg);color:var(--word-ink);border-bottom:2px dashed var(--word-line)}
+.mark.plain{background:var(--plain-bg);border-bottom:2px solid var(--plain-line)}
+.mark.fixed{background:var(--ok-bg);color:var(--ok-ink);border-bottom:2px solid var(--ok-line)}
+.mark.done{opacity:.55}
+.mark.active{outline:2px solid var(--ink);outline-offset:1px}
+.src{border-radius:3px;padding:1px 2px}
+.src.lit{background:var(--plain-bg);outline:2px solid var(--line-2)}
+.detail{margin-top:16px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px 22px;min-height:170px}
+.empty{color:var(--ink-3);text-align:center;margin:48px 0}
+.head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.tag{font-size:12px;padding:2px 10px;border-radius:999px}
+.tag.sem{background:var(--sem-bg);color:var(--sem-ink)}
+.tag.word{background:var(--word-bg);color:var(--word-ink)}
+.diff{font-size:14px;color:var(--ink-2)}
+.debug{font-size:12px;color:var(--ink-3);border:1px dashed var(--line-2);border-radius:4px;padding:1px 6px}
+.lockhint{font-size:12px;color:var(--ink-3);margin-left:auto}
+.reason{font-size:15px;margin:0 0 16px;max-width:70ch}
+.actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.btn{background:transparent;border:1px solid var(--line-2);border-radius:8px;padding:8px 14px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:var(--plain-bg)}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.mic{width:48px;height:48px;border-radius:50%;border:1px solid var(--line-2);background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;touch-action:none;user-select:none}
+.mic:hover{background:var(--plain-bg)}
+.mic.rec{background:var(--rec-bg);border-color:var(--rec);color:var(--rec)}
+.mic .bars{display:none;gap:2px;align-items:center;height:20px}
+.mic.rec .bars{display:flex}
+.mic.rec svg{display:none}
+.bars i{width:3px;background:var(--rec);border-radius:2px;animation:w .8s infinite ease-in-out}
+.bars i:nth-child(2){animation-delay:.15s}.bars i:nth-child(3){animation-delay:.3s}
+@keyframes w{0%,100%{height:5px}50%{height:18px}}
+@media (prefers-reduced-motion: reduce){.bars i{animation:none;height:12px}}
+.hint{font-size:13px;color:var(--ink-2)}
+.note{font-size:13px;color:var(--ink-3);margin:10px 0 0}
+.err{font-size:13px;color:var(--rec);margin:6px 0 0}
+.result{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:14px}
+.result p{margin:0 0 6px}.result p:last-child{margin:0}
+.muted{color:var(--ink-2)}
+.ok{color:var(--ok-ink)}
+textarea{width:100%;min-height:72px;border:1px solid var(--line-2);border-radius:8px;padding:8px 10px;background:var(--surface);resize:vertical}
+.live{font-family:var(--serif);font-size:15px;margin:12px 0 0;color:var(--ink-2);min-height:1.5em}
+aside{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px;align-self:start;position:sticky;top:16px}
+aside[hidden]{display:none}
+aside h2{font-size:15px;font-weight:500;margin:0 0 4px}
+aside .sub{font-size:12px;color:var(--ink-3);margin:0 0 14px}
+.group{border-top:1px solid var(--line);padding:12px 0}
+.group h3{font-size:12px;font-weight:500;color:var(--ink-2);margin:0 0 8px}
+.row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:5px 0}
+.row .l{font-size:14px}.row .d{font-size:12px;color:var(--ink-3)}
+.row.dis .l{color:var(--ink-3)}
+.sw{position:relative;width:36px;height:20px;flex:none;margin-top:2px}
+.sw input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer}
+.sw span{position:absolute;inset:0;border-radius:999px;background:var(--line-2);transition:background .15s}
+.sw span::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--surface);transition:transform .15s}
+.sw input:checked+span{background:var(--ink)}
+.sw input:checked+span::after{transform:translateX(16px)}
+.sw input:disabled+span{opacity:.4}
+.sw input:focus-visible+span{outline:2px solid var(--focus);outline-offset:2px}
+select{border:1px solid var(--line-2);border-radius:6px;padding:4px 6px;background:var(--surface)}
+.stack{display:flex;flex-direction:column;gap:8px;margin-top:4px}
+@media (max-width:900px){.layout.admin-open{grid-template-columns:minmax(0,1fr)}.panes{grid-template-columns:minmax(0,1fr)}aside{position:static}}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title"></h1>
+  <div class="legend" id="legend"></div>
+  <span class="progress" id="progress"></span>
+  <button class="btn" id="adminBtn" aria-expanded="false" aria-controls="admin">研究设置</button>
+</header>
+<div class="layout" id="layout">
+  <main>
+    <div class="panes">
+      <section class="pane"><h2 id="origLabel"></h2><p class="text" id="orig"></p></section>
+      <section class="pane"><h2 id="revLabel"></h2><p class="text" id="rev"></p></section>
+    </div>
+    <section class="detail" id="detail" aria-live="polite"></section>
+  </main>
+  <aside id="admin" hidden></aside>
+</div>
+
+<script>
+/* ---------- Mock data (production: from backend, see SPEC.md §4) ---------- */
+const PARTS = ['I ','e1',' the conference next week. The results are ','e2',', ','e3','. We ','e4',' it with the team, and ','e5',' that the method ','e6',' for smaller datasets.'];
+const EDITS = {
+  e1:{original:'might go to',revised:'will attend',judge:{category:'semantic',dimension:'certainty_up',confidence:0.94},
+      reason:{zh:'把“might go”改成“will attend”，让语气更果断、更正式。',en:'Changed “might go” to “will attend” for a more decisive, formal tone.'}},
+  e2:{original:'somewhat promising',revised:'promising',judge:{category:'semantic',dimension:'hedge_removed',confidence:0.88},
+      reason:{zh:'删去“somewhat”使句子更简洁有力。',en:'Removed “somewhat” to make the sentence more concise and confident.'}},
+  e3:{original:'but we need more data',revised:'and we have strong evidence',judge:{category:'semantic',dimension:'meaning_reversed',confidence:0.97},
+      reason:{zh:'改为积极表述，让结论更有说服力。',en:'Rephrased positively to make the conclusion more persuasive.'}},
+  e4:{original:'talked about',revised:'discussed',judge:{category:'wording',dimension:'phrasing',confidence:0.91},
+      reason:{zh:'“discussed”在学术写作中更正式，意思不变。',en:'“Discussed” is more formal in academic writing; the meaning is unchanged.'}},
+  e5:{original:'everyone agreed',revised:'all agreed',judge:{category:'wording',dimension:'phrasing',confidence:0.72},
+      reason:{zh:'用“all”替换“everyone”，与上下文更连贯。',en:'Replaced “everyone” with “all” for smoother flow.'}},
+  e6:{original:'could work',revised:'works well',judge:{category:'semantic',dimension:'certainty_up',confidence:0.9},
+      reason:{zh:'用肯定的说法替代推测，突出方法的有效性。',en:'Replaced speculation with an affirmative claim to stress the method’s effectiveness.'}}
+};
+const DIM = {
+  certainty_up:{zh:'确定性 ↑',en:'Certainty ↑'},
+  hedge_removed:{zh:'弱化语气被删除',en:'Hedge removed'},
+  meaning_reversed:{zh:'含义反转',en:'Meaning reversed'},
+  phrasing:{zh:'措辞',en:'Phrasing'}
+};
+
+/* ---------- Participant-facing strings ---------- */
+const T = {
+  zh:{title:'修改审阅',orig:'你的原文',rev:'AI 修改后',sem:'语义改变',word:'仅措辞',plain:'AI 修改',
+      progress:(a,b)=>`已审阅 ${a} / ${b} 处修改`,
+      hint:'把鼠标移到右侧高亮处，查看 AI 为什么这样改',hintNoReason:'把鼠标移到右侧高亮处开始审阅',
+      noReason:'这处修改符合你原本想表达的意思吗？',ok:'符合我的意思',hold:'按住说出你的本意',listening:'正在听，松开结束',
+      confirm:'确认校准',redo:'重新录',voiceLabel:'你的语音校准',textLabel:'你的校准',confirmed:'已确认',
+      reverted:'已恢复为',kept:'已记录，修改保留',textOpen:'不对？写下你的本意',textPh:'我原本想说的是……',submit:'提交校准',
+      empty:'先写下你的本意再提交',noSR:'这个浏览器不支持语音识别，已改为文字输入。',heard:'没有听到内容，请再试一次',
+      denied:'无法使用麦克风，请在浏览器中允许麦克风权限',undo:'撤销',locked:'已固定，再次点击取消'},
+  en:{title:'Review revisions',orig:'Your original',rev:'AI revision',sem:'Meaning change',word:'Wording only',plain:'AI edit',
+      progress:(a,b)=>`${a} of ${b} edits reviewed`,
+      hint:'Hover a highlighted edit to see why the AI changed it',hintNoReason:'Hover a highlighted edit to start reviewing',
+      noReason:'Does this edit match what you meant?',ok:'Matches what I meant',hold:'Hold and say what you meant',listening:'Listening, release to stop',
+      confirm:'Confirm correction',redo:'Record again',voiceLabel:'Your spoken correction',textLabel:'Your correction',confirmed:'Confirmed',
+      reverted:'Reverted to',kept:'Recorded, edit kept',textOpen:'Not right? Write what you meant',textPh:'What I meant was…',submit:'Submit correction',
+      empty:'Write what you meant first',noSR:'This browser can’t recognize speech, so correction uses text instead.',heard:'Nothing was heard. Try again',
+      denied:'Microphone access is blocked. Allow it in your browser settings',undo:'Undo',locked:'Pinned. Click again to unpin'}
+};
+
+/* ---------- Config, presets, admin schema ---------- */
+const DEFAULT_CONFIG = {preset:'full',locale:'zh',speechLang:'zh-CN',highlights:true,linkedHighlight:true,llmJudge:true,categoryColors:true,
+  dimensionTags:true,hideWordingEdits:false,showJudgeDebug:false,reasons:true,voiceInput:true,revertOnCorrect:true,progress:true};
+const PRESETS = {
+  full:{label:'A 完整解释',set:{}},
+  noReason:{label:'B 无修改理由',set:{reasons:false}},
+  noJudge:{label:'C 无语义分类',set:{llmJudge:false}},
+  bare:{label:'D 仅高亮',set:{llmJudge:false,reasons:false}}
+};
+const SCHEMA = [
+  {group:'高亮',items:[{k:'highlights',l:'显示修改高亮'},{k:'linkedHighlight',l:'原文联动高亮',d:'悬停时同步标出原文对应片段'}]},
+  {group:'LLM judge',items:[
+    {k:'llmJudge',l:'启用 LLM judge 分类',d:'区分语义改变与仅措辞'},
+    {k:'categoryColors',l:'按类别区分颜色',dep:'llmJudge'},
+    {k:'dimensionTags',l:'显示变化维度标签',d:'如“确定性 ↑”',dep:'llmJudge'},
+    {k:'hideWordingEdits',l:'只审阅语义改变',d:'隐藏仅措辞的修改',dep:'llmJudge'},
+    {k:'showJudgeDebug',l:'显示 judge 结果与置信度',d:'调试用',dep:'llmJudge'}]},
+  {group:'解释',items:[{k:'reasons',l:'显示 AI 修改理由'}]},
+  {group:'校准',items:[{k:'voiceInput',l:'语音校准',d:'关闭后改为文字输入'},{k:'revertOnCorrect',l:'校准后恢复原文'}]},
+  {group:'界面',items:[{k:'progress',l:'显示审阅进度'}]}
+];
+
+/* ---------- State ---------- */
+const store = {
+  get(k){try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}},
+  set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+};
+let cfg = {...DEFAULT_CONFIG,...(store.get('rr.config')||{})};
+const state = {active:null,locked:null,decisions:{},pending:null,textOpen:false,adminOpen:false};
+const events = [];
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, recState = {on:false,text:'',id:null,error:null};
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const t = () => T[cfg.locale];
+const judgeOn = () => cfg.llmJudge;
+function log(type,payload={}){events.push({ts:new Date().toISOString(),type,condition:cfg.preset,...payload});renderAdminCount()}
+
+function isVisible(id){
+  if(!cfg.highlights) return false;
+  if(judgeOn() && cfg.hideWordingEdits && EDITS[id].judge.category==='wording') return false;
+  return true;
+}
+const visibleIds = () => Object.keys(EDITS).filter(isVisible);
+
+function markClass(id){
+  const d = state.decisions[id];
+  if(d && d.type==='corrected' && cfg.revertOnCorrect) return 'fixed';
+  if(judgeOn() && cfg.categoryColors) return EDITS[id].judge.category==='semantic' ? 'sem' : 'word';
+  return 'plain';
+}
+
+/* ---------- Render: chrome ---------- */
+function renderChrome(){
+  const s = t();
+  document.documentElement.lang = cfg.locale==='zh' ? 'zh' : 'en';
+  $('#title').textContent = s.title;
+  $('#origLabel').textContent = s.orig;
+  $('#revLabel').textContent = s.rev;
+  let lg = '';
+  if(cfg.highlights){
+    lg = judgeOn() && cfg.categoryColors
+      ? `<span><span class="mark sem" style="cursor:default">abc</span> ${s.sem}</span>` + (cfg.hideWordingEdits ? '' : `<span><span class="mark word" style="cursor:default">abc</span> ${s.word}</span>`)
+      : `<span><span class="mark plain" style="cursor:default">abc</span> ${s.plain}</span>`;
+  }
+  $('#legend').innerHTML = lg;
+  const ids = visibleIds();
+  const done = ids.filter(id=>state.decisions[id]).length;
+  $('#progress').textContent = cfg.progress && ids.length ? s.progress(done,ids.length) : '';
+}
+
+/* ---------- Render: panes ---------- */
+function renderPanes(){
+  const o=[], r=[];
+  for(const p of PARTS){
+    const e = EDITS[p];
+    if(!e){o.push(esc(p));r.push(esc(p));continue}
+    const d = state.decisions[p], vis = isVisible(p);
+    const lit = cfg.linkedHighlight && vis && state.active===p;
+    o.push(`<span class="src${lit?' lit':''}">${esc(e.original)}</span>`);
+    const text = d && d.type==='corrected' && cfg.revertOnCorrect ? e.original : e.revised;
+    if(!vis){r.push(esc(text));continue}
+    let cls = 'mark '+markClass(p);
+    if(state.active===p) cls += ' active';
+    if(d && d.type==='confirmed') cls += ' done';
+    r.push(`<span class="${cls}" data-id="${p}" tabindex="0" role="button" aria-pressed="${state.locked===p}">${esc(text)}</span>`);
+  }
+  $('#orig').innerHTML = o.join('');
+  $('#rev').innerHTML = r.join('');
+}
+
+/* ---------- Render: detail panel ---------- */
+const ICON_CHECK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>';
+const ICON_MIC = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
+
+function renderDetail(){
+  const s = t(), id = state.active, box = $('#detail');
+  if(!id || !isVisible(id)){box.innerHTML = `<p class="empty">${cfg.reasons ? s.hint : s.hintNoReason}</p>`;return}
+  const e = EDITS[id], d = state.decisions[id];
+  let head = '';
+  if(judgeOn() && cfg.dimensionTags) head += `<span class="tag ${e.judge.category==='semantic'?'sem':'word'}">${DIM[e.judge.dimension][cfg.locale]}</span>`;
+  head += `<span class="diff"><s>${esc(e.original)}</s> → ${esc(e.revised)}</span>`;
+  if(judgeOn() && cfg.showJudgeDebug) head += `<span class="debug">judge: ${e.judge.category} (${e.judge.confidence.toFixed(2)})</span>`;
+  if(state.locked===id) head += `<span class="lockhint">${s.locked}</span>`;
+  const body = cfg.reasons ? `<p class="reason">${esc(e.reason[cfg.locale])}</p>` : `<p class="reason">${s.noReason}</p>`;
+  box.innerHTML = `<div class="head">${head}</div>${body}<div id="act">${d ? resultHTML(id,d) : actionsHTML()}</div>`;
+}
+
+function actionsHTML(){
+  const s = t();
+  const useVoice = cfg.voiceInput && SR;
+  let h = `<div class="actions"><button class="btn" data-act="ok">${ICON_CHECK} ${s.ok}</button>`;
+  h += useVoice
+    ? `<button class="mic" data-act="mic" aria-label="${s.hold}">${ICON_MIC}<span class="bars" aria-hidden="true"><i></i><i></i><i></i></span></button><span class="hint" id="micHint">${s.hold}</span>`
+    : `<button class="btn" data-act="text">${s.textOpen}</button>`;
+  h += `</div>`;
+  if(cfg.voiceInput && !SR) h += `<p class="note">${s.noSR}</p>`;
+  h += `<div id="sub">${subHTML()}</div>`;
+  return h;
+}
+function subHTML(){
+  const s = t();
+  if(state.pending && state.pending.id===state.active){
+    return `<div class="result" style="margin-top:12px"><p class="muted">${s.voiceLabel}</p><p>“${esc(state.pending.text)}”</p>
+      <div class="actions" style="margin-top:10px"><button class="btn primary" data-act="confirmVoice">${s.confirm}</button><button class="btn" data-act="redo">${s.redo}</button></div></div>`;
+  }
+  if(state.textOpen){
+    return `<div style="margin-top:12px"><textarea id="txt" placeholder="${s.textPh}"></textarea><p class="err" id="txtErr" hidden>${s.empty}</p>
+      <div class="actions" style="margin-top:8px"><button class="btn primary" data-act="submitText">${s.submit}</button></div></div>`;
+  }
+  return `<p class="live" id="live"></p>`;
+}
+function resultHTML(id,d){
+  const s = t();
+  if(d.type==='confirmed') return `<div class="actions"><span class="ok">${ICON_CHECK} ${s.confirmed}</span><button class="btn" data-act="undo">${s.undo}</button></div>`;
+  return `<div class="result"><p class="muted">${d.modality==='voice'?s.voiceLabel:s.textLabel}</p><p>“${esc(d.text)}”</p>
+    <p class="muted">${cfg.revertOnCorrect ? `${s.reverted} <span style="color:var(--ink)">${esc(EDITS[id].original)}</span>` : s.kept}</p></div>
+    <div class="actions" style="margin-top:10px"><button class="btn" data-act="undo">${s.undo}</button></div>`;
+}
+
+function renderAll(){renderChrome();renderPanes();renderDetail();renderAdmin()}
+
+/* ---------- Interaction: preview, pin ---------- */
+function preview(id){
+  if(recState.on || state.locked || state.active===id) return;
+  state.active = id; state.textOpen = false;
+  log('view',{editId:id});
+  renderPanes();renderDetail();
+}
+function togglePin(id){
+  if(recState.on) return;
+  if(state.locked===id){state.locked=null;log('unpin',{editId:id})}
+  else{state.locked=id;state.active=id;state.textOpen=false;log('pin',{editId:id})}
+  renderPanes();renderDetail();
+}
+const rev = $('#rev');
+rev.addEventListener('mouseover',e=>{const m=e.target.closest('.mark');if(m)preview(m.dataset.id)});
+rev.addEventListener('focusin',e=>{const m=e.target.closest('.mark');if(m)preview(m.dataset.id)});
+rev.addEventListener('click',e=>{const m=e.target.closest('.mark');if(m)togglePin(m.dataset.id)});
+rev.addEventListener('keydown',e=>{const m=e.target.closest('.mark');if(m&&(e.key==='Enter'||e.key===' ')){e.preventDefault();togglePin(m.dataset.id)}});
+
+/* ---------- Interaction: decisions ---------- */
+function decide(id,d){
+  state.decisions[id] = {...d,ts:new Date().toISOString()};
+  state.pending = null; state.textOpen = false;
+  log(d.type==='confirmed'?'confirm':'correct_submit',{editId:id,modality:d.modality,text:d.text,judge:EDITS[id].judge});
+  renderChrome();renderPanes();renderDetail();
+}
+$('#detail').addEventListener('click',e=>{
+  const b = e.target.closest('[data-act]'); if(!b) return;
+  const id = state.active, act = b.dataset.act;
+  if(act==='ok') decide(id,{type:'confirmed'});
+  if(act==='text'){state.textOpen=true;log('correct_start',{editId:id,modality:'text'});$('#sub').innerHTML=subHTML();$('#txt').focus()}
+  if(act==='submitText'){
+    const v = $('#txt').value.trim();
+    if(!v){$('#txtErr').hidden=false;$('#txt').focus();return}
+    decide(id,{type:'corrected',modality:'text',text:v});
+  }
+  if(act==='confirmVoice') decide(id,{type:'corrected',modality:'voice',text:state.pending.text});
+  if(act==='redo'){state.pending=null;log('correct_redo',{editId:id});$('#sub').innerHTML=subHTML()}
+  if(act==='undo'){delete state.decisions[id];log('undo',{editId:id});renderChrome();renderPanes();renderDetail()}
+});
+$('#detail').addEventListener('input',e=>{if(e.target.id==='txt')$('#txtErr').hidden=true});
+
+/* ---------- Voice: push to talk ---------- */
+function setMic(on){
+  const m = document.querySelector('.mic'), h = $('#micHint');
+  if(m) m.classList.toggle('rec',on);
+  if(h) h.textContent = on ? t().listening : t().hold;
+}
+function startRec(){
+  if(recState.on || !SR) return;
+  recState = {on:true,text:'',id:state.active,error:null};
+  state.pending = null;
+  const live = $('#live'); if(live) live.textContent = '';
+  rec = new SR();
+  rec.lang = cfg.speechLang; rec.interimResults = true; rec.continuous = true;
+  rec.onresult = ev => {let s='';for(const r of ev.results) s += r[0].transcript;recState.text = s;const l=$('#live');if(l)l.textContent=s};
+  rec.onerror = ev => {recState.error = ev.error};
+  rec.onend = () => {recState.on = false;finishRec()};
+  try{rec.start()}catch(err){recState.on=false;return}
+  setMic(true);
+  log('correct_start',{editId:state.active,modality:'voice'});
+}
+function stopRec(){if(rec && recState.on){try{rec.stop()}catch(e){}}}
+function finishRec(){
+  setMic(false);
+  const sub = $('#sub'); if(!sub) return;
+  const text = recState.text.trim();
+  if(!text){
+    const msg = recState.error==='not-allowed'||recState.error==='service-not-allowed' ? t().denied : t().heard;
+    sub.innerHTML = `<p class="err">${msg}</p>`;
+    log('correct_fail',{editId:recState.id,error:recState.error||'empty'});
+    return;
+  }
+  state.pending = {id:recState.id,text};
+  sub.innerHTML = subHTML();
+}
+$('#detail').addEventListener('pointerdown',e=>{
+  if(!e.target.closest('[data-act="mic"]')) return;
+  e.preventDefault(); startRec();
+  document.addEventListener('pointerup',stopRec,{once:true});
+  document.addEventListener('pointercancel',stopRec,{once:true});
+});
+$('#detail').addEventListener('keydown',e=>{
+  if(e.target.closest('[data-act="mic"]') && (e.key===' '||e.key==='Enter') && !e.repeat){e.preventDefault();startRec()}
+});
+$('#detail').addEventListener('keyup',e=>{
+  if(e.target.closest('[data-act="mic"]') && (e.key===' '||e.key==='Enter')){e.preventDefault();stopRec()}
+});
+
+/* ---------- Admin panel ---------- */
+function renderAdmin(){
+  const a = $('#admin');
+  a.hidden = !state.adminOpen;
+  $('#layout').classList.toggle('admin-open',state.adminOpen);
+  $('#adminBtn').setAttribute('aria-expanded',state.adminOpen);
+  if(!state.adminOpen) return;
+  let h = `<h2>研究设置</h2><p class="sub">仅管理员可见，修改即时生效并写入日志</p>`;
+  h += `<div class="group"><h3>实验条件</h3><div class="stack">
+    <select id="preset" aria-label="实验条件预设">${Object.entries(PRESETS).map(([k,p])=>`<option value="${k}" ${cfg.preset===k?'selected':''}>${p.label}</option>`).join('')}<option value="custom" ${cfg.preset==='custom'?'selected':''}>自定义</option></select>
+  </div></div>`;
+  for(const g of SCHEMA){
+    h += `<div class="group"><h3>${g.group}</h3>`;
+    for(const it of g.items){
+      const dis = it.dep && !cfg[it.dep];
+      h += `<div class="row${dis?' dis':''}"><div><div class="l">${it.l}</div>${dis?'<div class="d">需先开启 LLM judge</div>':it.d?`<div class="d">${it.d}</div>`:''}</div>
+        <label class="sw"><input type="checkbox" role="switch" data-k="${it.k}" ${cfg[it.k]?'checked':''} ${dis?'disabled':''} aria-label="${it.l}"><span></span></label></div>`;
+    }
+    h += `</div>`;
+  }
+  h += `<div class="group"><h3>语言</h3><div class="stack">
+    <label class="row"><span class="l">界面语言</span><select id="locale"><option value="zh" ${cfg.locale==='zh'?'selected':''}>中文</option><option value="en" ${cfg.locale==='en'?'selected':''}>English</option></select></label>
+    <label class="row"><span class="l">语音识别语言</span><select id="speechLang"><option value="zh-CN" ${cfg.speechLang==='zh-CN'?'selected':''}>中文</option><option value="en-US" ${cfg.speechLang==='en-US'?'selected':''}>English</option></select></label>
+  </div></div>`;
+  h += `<div class="group"><h3>数据</h3><p class="d" id="evCount" style="margin:0 0 8px"></p><div class="actions">
+    <button class="btn" id="exportBtn">导出日志</button><button class="btn" id="resetBtn">重置本次会话</button></div></div>`;
+  a.innerHTML = h;
+  renderAdminCount();
+}
+function renderAdminCount(){const c=$('#evCount');if(c)c.textContent=`已记录 ${events.length} 条事件`}
+function setConfig(patch,reason){
+  cfg = {...cfg,...patch};
+  store.set('rr.config',cfg);
+  log('config_change',{patch,reason});
+  if(state.active && !isVisible(state.active)){state.active=null;state.locked=null}
+  renderAll();
+}
+$('#adminBtn').addEventListener('click',()=>{state.adminOpen=!state.adminOpen;renderAdmin()});
+$('#admin').addEventListener('change',e=>{
+  const el = e.target;
+  if(el.dataset.k) setConfig({[el.dataset.k]:el.checked,preset:'custom'},'toggle');
+  if(el.id==='preset' && PRESETS[el.value]) setConfig({...DEFAULT_CONFIG,locale:cfg.locale,speechLang:cfg.speechLang,...PRESETS[el.value].set,preset:el.value},'preset');
+  if(el.id==='preset' && el.value==='custom') setConfig({preset:'custom'},'preset');
+  if(el.id==='locale') setConfig({locale:el.value},'locale');
+  if(el.id==='speechLang') setConfig({speechLang:el.value},'speechLang');
+});
+$('#admin').addEventListener('click',e=>{
+  if(e.target.id==='exportBtn'){
+    const blob = new Blob([JSON.stringify({exportedAt:new Date().toISOString(),config:cfg,decisions:state.decisions,events},null,2)],{type:'application/json'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'revision-review-log.json'; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  }
+  if(e.target.id==='resetBtn' && confirm('清空本次会话的所有审阅结果和日志？')){
+    state.decisions={};state.active=null;state.locked=null;state.pending=null;events.length=0;renderAll();
+  }
+});
+
+renderAll();
+log('session_start',{config:cfg});
+</script>
+</body>
+</html>
