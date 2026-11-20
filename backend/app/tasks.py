@@ -17,9 +17,30 @@ TASKS: dict[str, dict] = {
         "minWords": 40,
         "placeholder": "Subject: \n\n",
     },
+    "client_apology": {
+        "id": "client_apology",
+        "title": "Apologize to a client after a costly mistake",
+        "scenario": (
+            "You're an account manager at a small marketing agency. For two years you've handled the account of a "
+            "regional furniture retailer, working directly with its marketing director. Last Friday your agency "
+            "launched the retailer's weekend sale ads with the wrong discount: 50% off instead of 15% off. You caught "
+            "it Saturday morning and pulled the ads, but by then dozens of customers had come into the stores "
+            "expecting half off, and some left angry. It happened because you approved the final proof without "
+            "checking it against the client's brief."
+        ),
+        "assignment": (
+            "Write an email, with a subject line, to the marketing director. They have already heard about the "
+            "problem from their store managers and are upset. Your agency can't afford to lose this account."
+        ),
+        "minWords": 40,
+        "placeholder": "Subject: \n\n",
+    },
 }
 
 DEFAULT_TASK = "energy_job_inquiry"
+
+# Every participant writes all of these, in an order randomized per participant (see main.pick_order).
+STUDY_TASKS = ["energy_job_inquiry", "client_apology"]
 
 
 def task_brief(task: dict) -> str:

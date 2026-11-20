@@ -26,6 +26,8 @@ export function SessionPage() {
   useEffect(() => {
     let lg: EventLogger | null = null;
     let cancelled = false;
+    setView(null); // moving to the next task reuses this page with a new id
+    setError(null);
     api
       .session(id, token)
       .then((v) => {
@@ -76,11 +78,13 @@ export function SessionPage() {
   const isAdmin = view.role === 'admin';
   const showAdmin = isAdmin && adminOpen;
   const toggleAdmin = isAdmin ? () => setAdminOpen((o) => !o) : undefined;
+  const seq = view.sequence;
+  const step = (s: string) => (seq && seq.total > 1 ? `${S.taskOf(seq.index, seq.total)} · ${s}` : s);
 
   if (view.stage !== 'review') {
     return (
       <>
-        <Header title={S.writeTitle} step={view.task ? S.stepWrite : undefined} adminOpen={showAdmin} onToggleAdmin={toggleAdmin} />
+        <Header title={S.writeTitle} step={view.task ? step(S.stepWrite) : undefined} adminOpen={showAdmin} onToggleAdmin={toggleAdmin} />
         <div className={`${styles.layout} ${showAdmin ? styles.adminOpen : ''}`}>
           <main>
             {view.task ? (
@@ -98,7 +102,7 @@ export function SessionPage() {
   if (!reviewSession || reviewSession.id !== id) return <p className="center-msg">Loading…</p>;
   return (
     <>
-      <Header title={S.title} step={view.task ? S.stepReview : undefined} adminOpen={showAdmin} onToggleAdmin={toggleAdmin}>
+      <Header title={S.title} step={view.task ? step(S.stepReview) : undefined} adminOpen={showAdmin} onToggleAdmin={toggleAdmin}>
         <ReviewHeaderExtras />
       </Header>
       <div className={`${styles.layout} ${showAdmin ? styles.adminOpen : ''}`}>

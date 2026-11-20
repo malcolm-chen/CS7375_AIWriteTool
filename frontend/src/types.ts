@@ -31,11 +31,19 @@ export interface Decision {
 export type Role = 'admin' | 'participant';
 export type Stage = 'writing' | 'enhancing' | 'review';
 
+/** Where this session sits in the participant's task order; `next` appears once this task is in review. */
+export interface Sequence {
+  index: number;
+  total: number;
+  next: { id: string; token: string } | null;
+}
+
 interface ViewBase {
   id: string;
   participantId: string;
   task: Task | null;
   role: Role;
+  sequence: Sequence | null;
 }
 
 export interface WritingView extends ViewBase {
@@ -56,7 +64,7 @@ export type AnyView = WritingView | SessionView;
 
 export type EventType =
   | 'session_start' | 'writing_start' | 'paste' | 'view' | 'pin' | 'unpin' | 'confirm' | 'correct_start'
-  | 'correct_submit' | 'correct_redo' | 'correct_fail' | 'undo' | 'session_end';
+  | 'correct_submit' | 'correct_redo' | 'correct_fail' | 'undo' | 'next_task' | 'session_end';
 
 export interface SessionSummary {
   id: string;
@@ -73,4 +81,6 @@ export interface SessionSummary {
   warnings: string[];
   token: string;
   createdAt: string;
+  groupId: string | null;
+  seq: number | null;
 }
