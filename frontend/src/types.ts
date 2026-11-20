@@ -83,4 +83,6 @@ export interface SessionSummary {
   createdAt: string;
   groupId: string | null;
   seq: number | null;
+  /** 'noReasons': explanations are withheld from the participant. null shows them. */
+  condition: 'reasons' | 'noReasons' | null;
 }

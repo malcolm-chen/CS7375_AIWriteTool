@@ -4,6 +4,8 @@ import { api, ApiError, participantLink } from '../api';
 import type { SessionSummary } from '../types';
 import styles from './Admin.module.css';
 
+const CONDITION = { reasons: 'With AI explanations', noReasons: 'No explanations' } as const;
+
 type AdminData = Awaited<ReturnType<typeof api.sessions>>;
 
 function Login({ onDone }: { onDone(): void }) {
@@ -34,6 +36,7 @@ function CreateCard({ data, onCreated }: { data: AdminData; onCreated(): void })
   const [ids, setIds] = useState('');
   // '' = every study task in a random order per participant; a task id = that task alone (piloting).
   const [taskId, setTaskId] = useState('');
+  const [condition, setCondition] = useState('reasons');
   const [created, setCreated] = useState<SessionSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const list = ids.split(/[\s,]+/).filter(Boolean);
@@ -41,7 +44,8 @@ function CreateCard({ data, onCreated }: { data: AdminData; onCreated(): void })
   const run = async () => {
     setError(null);
     try {
-      setCreated((await api.createSessions(list, taskId || null)).created.filter((s) => (s.seq ?? 1) === 1));
+      const res = await api.createSessions(list, taskId || null, taskId ? condition : null);
+      setCreated(res.created.filter((s) => (s.seq ?? 1) === 1));
       setIds('');
       onCreated();
     } catch (e) {
@@ -54,7 +58,8 @@ function CreateCard({ data, onCreated }: { data: AdminData; onCreated(): void })
       <h2>Create sessions</h2>
       <p className={styles.sub}>
         Each participant writes their own draft for each task, the AI revises it, and they review the changes. With
-        all tasks, the order is randomized and balanced across participants, and one link leads through every task.{' '}
+        all tasks, one link leads through every task, and both the task order and which task shows the AI’s
+        explanations are randomized and balanced across participants.{' '}
         {data.aiConfigured ? (
           <span className="ok">AI model: {data.aiModel} (falls back left to right)</span>
         ) : (
@@ -74,6 +79,11 @@ function CreateCard({ data, onCreated }: { data: AdminData; onCreated(): void })
           <option value="">All {data.studyTasks.length} tasks, random order</option>
           {Object.entries(data.tasks).map(([k, title]) => <option key={k} value={k}>Only: {title}</option>)}
         </select>
+        {taskId && (
+          <select value={condition} onChange={(e) => setCondition(e.target.value)} aria-label="Explanation condition">
+            {data.studyConditions.map((c) => <option key={c} value={c}>{CONDITION[c as keyof typeof CONDITION] ?? c}</option>)}
+          </select>
+        )}
         <button className="btn primary" onClick={run} disabled={!list.length}>Create for {list.length > 1 ? `${list.length} participants` : 'participant'}</button>
       </div>
       {error && <p className="err">{error}</p>}
@@ -180,6 +190,7 @@ function SessionRow({ s, tasks, onChange }: { s: SessionSummary; tasks: Record<s
       <td>
         {s.taskId ? tasks[s.taskId] ?? s.taskId : <span className="faint">Imported</span>}
         {s.seq != null && <div className="faint">Task {s.seq}{s.seq === 1 ? ' · send this link' : ''}</div>}
+        {s.condition && <div className="faint">{CONDITION[s.condition]}</div>}
       </td>
       <td>{STAGE[s.stage]}</td>
       <td className={styles.num}>{s.draftWords || '—'}</td>
