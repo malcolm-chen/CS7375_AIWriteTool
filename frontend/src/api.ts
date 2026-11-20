@@ -51,10 +51,17 @@ export const api = {
     request(withToken(`/api/sessions/${id}/decisions/${editId}`, token), { method: 'DELETE' }),
 
   sessions: () =>
-    request<{ sessions: SessionSummary[]; tasks: Record<string, string>; aiConfigured: boolean; aiModel: string }>(
+    request<{
+      sessions: SessionSummary[];
+      tasks: Record<string, string>;
+      studyTasks: string[];
+      aiConfigured: boolean;
+      aiModel: string;
+    }>(
       '/api/admin/sessions',
     ),
-  createSessions: (participantIds: string[], taskId: string) =>
+  /** taskId null: every study task, in a random order per participant. */
+  createSessions: (participantIds: string[], taskId: string | null) =>
     request<{ created: SessionSummary[] }>('/api/admin/sessions', {
       method: 'POST',
       body: JSON.stringify({ participantIds, taskId }),
