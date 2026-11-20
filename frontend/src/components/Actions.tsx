@@ -25,6 +25,7 @@ function VoiceButton({ editId, onLive, onFail }: { editId: string; onLive(t: str
   const start = () => {
     if (useReview.getState().recording) return;
     setPending(null);
+    useReview.setState({ textOpen: false }); // speaking replaces an open text box
     onLive('');
     onFail(null);
     const stop = startRecognition({
@@ -133,6 +134,7 @@ export function Actions({ editId }: { editId: string }) {
   const decide = useReview((s) => s.decide);
   const pending = useReview((s) => s.pending);
   const textOpen = useReview((s) => s.textOpen);
+  const recording = useReview((s) => s.recording);
   const openText = useReview((s) => s.openText);
   const [live, setLive] = useState('');
   const [fail, setFail] = useState<string | null>(null);
@@ -144,10 +146,18 @@ export function Actions({ editId }: { editId: string }) {
         <button className="btn" onClick={() => decide({ editId, type: 'confirmed' })}>
           <IconCheck /> {S.ok}
         </button>
-        {speechSupported ? (
-          <VoiceButton editId={editId} onLive={setLive} onFail={setFail} />
-        ) : (
-          !textOpen && <button className="btn" onClick={openText}>{S.textOpen}</button>
+        {speechSupported && <VoiceButton editId={editId} onLive={setLive} onFail={setFail} />}
+        {!textOpen && !recording && (
+          <button
+            className="btn"
+            onClick={() => {
+              setLive('');
+              setFail(null);
+              openText();
+            }}
+          >
+            {S.textOpen}
+          </button>
         )}
       </div>
       {!speechSupported && <p className={styles.note}>{S.noSpeech}</p>}
