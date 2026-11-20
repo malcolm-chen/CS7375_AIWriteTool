@@ -212,13 +212,17 @@ def test_each_participant_gets_every_task_in_balanced_random_order(monkeypatch):
         assert [r[0] for r in rows] == [1, 2] and len({r[2] for r in rows}) == 1
         assert sorted(r[1] for r in rows) == ["client_apology", "energy_job_inquiry"]
         seen.append(tuple(r[1] for r in rows))
-    # Balanced across everyone created so far (other tests share this database), not just this batch.
+    # Balanced across everyone created so far (other tests share this database), not just this batch:
+    # the four (task order x condition order) assignments are used within one of each other.
     everyone = {}
     for s in c.get("/api/admin/sessions").json()["sessions"]:
         if s["groupId"]:
-            everyone.setdefault(s["groupId"], []).append((s["seq"], s["taskId"]))
-    flat = [tuple(t for _, t in sorted(rows)) for rows in everyone.values()]
-    assert abs(flat.count(("energy_job_inquiry", "client_apology")) - flat.count(("client_apology", "energy_job_inquiry"))) <= 1
+            everyone.setdefault(s["groupId"], []).append((s["seq"], s["taskId"], s["condition"]))
+    assignments = [tuple((t, cond) for _, t, cond in sorted(rows)) for rows in everyone.values()]
+    counts = [assignments.count(a) for a in set(assignments)]
+    assert len(set(assignments)) == 4 and max(counts) - min(counts) <= 1
+    for a in assignments:
+        assert sorted(cond for _, cond in a) == ["noReasons", "reasons"]  # one task with, one without
     assert len(set(seen)) == 2
 
     first, second = sorted(next(iter(orders.values())))[:2]
@@ -251,3 +255,31 @@ def test_single_task_sessions_for_piloting():
     c.post("/api/auth/login", json={"password": "pw"})
     created = c.post("/api/admin/sessions", json={"participantIds": ["pilot"], "taskId": "client_apology"}).json()["created"]
     assert len(created) == 1 and created[0]["taskId"] == "client_apology" and created[0]["groupId"] is None
+
+
+def test_no_reasons_condition_withholds_explanations(monkeypatch):
+    c = TestClient(app)
+    c.post("/api/auth/login", json={"password": "pw"})
+    long_draft = DRAFT + " " + "More words here. " * 10
+    revised = (REVISED + " " + "More words here. " * 10).strip()
+    views = {}
+    for cond in ("reasons", "noReasons"):
+        s = c.post("/api/admin/sessions", json={"participantIds": [f"pilot-{cond}"], "taskId": "client_apology",
+                                                "condition": cond}).json()["created"][0]
+        assert s["condition"] == cond
+        monkeypatch.setattr(llm.httpx, "post", FakeKimi([
+            {"revised": revised, "changes": CHANGES},
+            {"changes": [{"id": "1", "type": "content", "explanation": "x"}]},
+        ]))
+        p = TestClient(app)
+        p.post(f"/api/sessions/{s['id']}/enhance", params={"t": s["token"]}, json={"text": long_draft})
+        views[cond] = (s, p.get(f"/api/sessions/{s['id']}", params={"t": s["token"]}).json())
+    assert all(e["explanation"] for e in views["reasons"][1]["edits"].values())
+    hidden = views["noReasons"][1]
+    assert all(e["explanation"] is None for e in hidden["edits"].values())
+    assert "Position" not in json.dumps(hidden)  # no explanation text anywhere in the response
+    # Explanations are still generated and exported for analysis.
+    exported = c.get("/api/admin/export", params={"sessionId": views["noReasons"][0]["id"]}).json()["sessions"][0]
+    assert exported["condition"] == "noReasons" and all(e["explanation"] for e in exported["edits"].values())
+    assert c.post("/api/admin/sessions", json={"participantIds": ["x"], "taskId": "client_apology",
+                                               "condition": "bogus"}).status_code == 400

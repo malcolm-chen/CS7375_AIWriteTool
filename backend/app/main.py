@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field  # noqa: E402
 
 from . import auth, db, llm  # noqa: E402
 from .importer import RecordError, build_content, iter_records  # noqa: E402
-from .tasks import STUDY_TASKS, TASKS  # noqa: E402
+from .tasks import STUDY_CONDITIONS, STUDY_TASKS, TASKS  # noqa: E402
 
 app = FastAPI(title="CoWrite revision review")
 db.init()
@@ -87,6 +87,9 @@ def participant_view(conn, s: dict, role: str) -> dict:
         view["draft"] = s["draft"]
         return view
     edits = {eid: {k: v for k, v in e.items() if k != "judge"} for eid, e in s["edits"].items()}
+    if s.get("condition") == "noReasons":
+        # Withheld here, not just hidden in the UI, so the explanations never reach the browser.
+        edits = {eid: {**e, "explanation": None} for eid, e in edits.items()}
     decisions = {
         r["edit_id"]: {"editId": r["edit_id"], "type": r["type"], "modality": r["modality"], "text": r["text"], "ts": r["ts"]}
         for r in conn.execute("SELECT * FROM decisions WHERE session_id = ?", (s["id"],))
@@ -298,6 +301,7 @@ def session_summary(conn, s: dict) -> dict:
         "createdAt": s["created_at"],
         "groupId": s.get("group_id"),
         "seq": s.get("seq"),
+        "condition": s.get("condition"),
     }
 
 
@@ -306,7 +310,7 @@ def insert_session(conn, **fields) -> dict:
         "id": secrets.token_hex(4), "task_id": None, "draft": "", "original": None, "revised": None,
         "segments": None, "edits": None, "meta": {}, "source_id": None, "warnings": [],
         "participant_token": auth.new_participant_token(), "created_at": now(), "enhanced_at": None,
-        "group_id": None, "seq": None, **fields,
+        "group_id": None, "seq": None, "condition": None, **fields,
     }
     cols = list(s)
     conn.execute(
@@ -324,33 +328,42 @@ def list_sessions():
             "sessions": [session_summary(conn, s) for s in rows],
             "tasks": {k: v["title"] for k, v in TASKS.items()},
             "studyTasks": STUDY_TASKS,
+            "studyConditions": STUDY_CONDITIONS,
             "aiConfigured": bool(llm.configured_providers()),
             "aiModel": " → ".join(f"{p['name']}:{p['model']}" for p in llm.configured_providers()),
         }
 
 
-def pick_order(conn) -> list[str]:
-    """Counterbalanced random order of STUDY_TASKS: a random choice among the orders used least so far,
-    so with two tasks each consecutive pair of participants gets one of each order."""
-    orders = list(itertools.permutations(STUDY_TASKS))
-    groups: dict[str, list[str]] = {}
-    for r in conn.execute("SELECT group_id, task_id FROM sessions WHERE group_id IS NOT NULL ORDER BY group_id, seq"):
-        groups.setdefault(r["group_id"], []).append(r["task_id"])
-    used = {o: 0 for o in orders}
-    for tasks in groups.values():
-        if tuple(tasks) in used:
-            used[tuple(tasks)] += 1
+Assignment = tuple[tuple[str, str], ...]  # ((task_id, condition), ...) in the order they are written
+
+
+def pick_assignment(conn) -> Assignment:
+    """Task order and which task gets which explanation condition, randomized and counterbalanced.
+
+    The candidates are every task order crossed with every condition order (2 x 2 = 4 for two tasks).
+    Each participant gets a random choice among the candidates used least so far, so every block of
+    four participants covers all four once: each task comes first and gets explanations equally often.
+    """
+    candidates = [tuple(zip(tasks, conds)) for tasks in itertools.permutations(STUDY_TASKS)
+                  for conds in itertools.permutations(STUDY_CONDITIONS)]
+    groups: dict[str, list[tuple[str, str]]] = {}
+    for r in conn.execute("SELECT group_id, task_id, condition FROM sessions WHERE group_id IS NOT NULL ORDER BY group_id, seq"):
+        groups.setdefault(r["group_id"], []).append((r["task_id"], r["condition"]))
+    used = {c: 0 for c in candidates}
+    for rows in groups.values():
+        if tuple(rows) in used:
+            used[tuple(rows)] += 1
     fewest = min(used.values())
-    return list(secrets.choice([o for o in orders if used[o] == fewest]))
+    return secrets.choice([c for c in candidates if used[c] == fewest])
 
 
 def insert_task_sequence(conn, participant_id: str) -> list[dict]:
-    """One writing session per study task, linked by group_id, in a counterbalanced random order."""
+    """One writing session per study task, linked by group_id, with a counterbalanced random assignment."""
     group = secrets.token_hex(4)
     return [
         insert_session(conn, participant_id=participant_id, task_id=task_id, source="task", stage="writing",
-                       group_id=group, seq=n)
-        for n, task_id in enumerate(pick_order(conn), start=1)
+                       group_id=group, seq=n, condition=condition)
+        for n, (task_id, condition) in enumerate(pick_assignment(conn), start=1)
     ]
 
 
@@ -358,12 +371,16 @@ class CreateBody(BaseModel):
     participantIds: list[str] = Field(min_length=1, max_length=500)
     # None: every study task in a random order (the study setup). A task id: that task alone (for piloting).
     taskId: str | None = None
+    # Only with taskId: the explanation condition for that single session (default: explanations shown).
+    condition: str | None = None
 
 
 @app.post("/api/admin/sessions", dependencies=[Depends(auth.require_admin)])
 def create_sessions(body: CreateBody):
     if body.taskId is not None and body.taskId not in TASKS:
         raise HTTPException(status_code=400, detail=f"Unknown task {body.taskId!r}.")
+    if body.condition is not None and body.condition not in STUDY_CONDITIONS:
+        raise HTTPException(status_code=400, detail=f"Unknown condition {body.condition!r}.")
     with db.connect() as conn:
         created = []
         for pid in body.participantIds:
@@ -373,7 +390,8 @@ def create_sessions(body: CreateBody):
             if body.taskId is None:
                 created += [session_summary(conn, s) for s in insert_task_sequence(conn, pid)]
             else:
-                s = insert_session(conn, participant_id=pid, task_id=body.taskId, source="task", stage="writing")
+                s = insert_session(conn, participant_id=pid, task_id=body.taskId, source="task", stage="writing",
+                                   condition=body.condition)
                 created.append(session_summary(conn, s))
         return {"created": created}
 
@@ -443,7 +461,7 @@ def delete_session(session_id: str):
 
 
 CSV_COLUMNS = [
-    "session_id", "participant_id", "group_id", "task_seq", "task_id", "stage", "actor", "event_seq", "client_ts", "server_ts",
+    "session_id", "participant_id", "group_id", "task_seq", "task_id", "condition", "stage", "actor", "event_seq", "client_ts", "server_ts",
     "type", "edit_id", "edit_kind", "edit_original", "edit_revised", "explanation", "explanation_mode",
     "modality", "text", "error", "payload",
 ]
@@ -484,7 +502,7 @@ def export(format: Literal["json", "csv"] = "json", sessionId: str | None = None
             payload = ev["payload"] or {}
             w.writerow({
                 "session_id": s["id"], "participant_id": s["participant_id"], "group_id": s.get("group_id"),
-                "task_seq": s.get("seq"), "task_id": s["task_id"],
+                "task_seq": s.get("seq"), "task_id": s["task_id"], "condition": s.get("condition"),
                 "stage": ev["stage"], "actor": ev["actor"], "event_seq": ev["id"], "client_ts": ev["client_ts"],
                 "server_ts": ev["server_ts"], "type": ev["type"], "edit_id": ev["edit_id"], "edit_kind": edit.get("kind"),
                 "edit_original": edit.get("original"), "edit_revised": edit.get("revised"),

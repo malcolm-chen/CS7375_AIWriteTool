@@ -55,16 +55,17 @@ export const api = {
       sessions: SessionSummary[];
       tasks: Record<string, string>;
       studyTasks: string[];
+      studyConditions: string[];
       aiConfigured: boolean;
       aiModel: string;
     }>(
       '/api/admin/sessions',
     ),
   /** taskId null: every study task, in a random order per participant. */
-  createSessions: (participantIds: string[], taskId: string | null) =>
+  createSessions: (participantIds: string[], taskId: string | null, condition: string | null = null) =>
     request<{ created: SessionSummary[] }>('/api/admin/sessions', {
       method: 'POST',
-      body: JSON.stringify({ participantIds, taskId }),
+      body: JSON.stringify({ participantIds, taskId, condition }),
     }),
   importData: (data: unknown) =>
     request<{ created: SessionSummary[]; failed: { index: number; sourceId: string | null; error: string }[] }>(
