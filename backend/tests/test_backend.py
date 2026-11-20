@@ -17,6 +17,7 @@ from app import llm  # noqa: E402
 from app.diffing import diff_spans, tokenize  # noqa: E402
 from app.importer import build_content  # noqa: E402
 from app.main import app  # noqa: E402
+from app.tasks import TASKS  # noqa: E402
 
 SAMPLE = json.loads((Path(__file__).resolve().parents[2] / "sample_data" / "sample_revisions.json").read_text())
 
@@ -118,7 +119,8 @@ def test_task_flow_and_permissions(monkeypatch):
     p = TestClient(app)
     assert p.get(f"/api/sessions/{s['id']}").status_code == 403
     view = p.get(f"/api/sessions/{s['id']}", params=q).json()
-    assert view["stage"] == "writing" and view["task"]["id"] == "energy_job_inquiry" and view["role"] == "participant"
+    assert view["stage"] == "writing" and view["task"]["id"] in TASKS and view["role"] == "participant"
+    assert view["sequence"]["index"] == 1 and view["sequence"]["total"] == 2
     assert p.put(f"/api/sessions/{s['id']}/draft", params=q, json={"text": "Dear"}).status_code == 200
     assert p.post(f"/api/sessions/{s['id']}/enhance", params=q, json={"text": "too short"}).status_code == 400
 
@@ -192,3 +194,60 @@ def test_demo_and_link_role(monkeypatch):
     c.post("/api/auth/login", json={"password": "pw"})
     assert c.get(f"/api/sessions/{d['id']}", params={"t": d["token"]}).json()["role"] == "participant"
     assert c.get(f"/api/sessions/{d['id']}").json()["role"] == "admin"
+
+
+def test_each_participant_gets_every_task_in_balanced_random_order(monkeypatch):
+    c = TestClient(app)
+    c.post("/api/auth/login", json={"password": "pw"})
+    pids = [f"S{n:02d}" for n in range(10)]
+    created = c.post("/api/admin/sessions", json={"participantIds": pids}).json()["created"]
+    assert len(created) == 20
+    orders = {}
+    for s in created:
+        orders.setdefault(s["groupId"], []).append((s["seq"], s["taskId"], s["participantId"]))
+    assert len(orders) == 10
+    seen = []
+    for rows in orders.values():
+        rows.sort()
+        assert [r[0] for r in rows] == [1, 2] and len({r[2] for r in rows}) == 1
+        assert sorted(r[1] for r in rows) == ["client_apology", "energy_job_inquiry"]
+        seen.append(tuple(r[1] for r in rows))
+    # Balanced across everyone created so far (other tests share this database), not just this batch.
+    everyone = {}
+    for s in c.get("/api/admin/sessions").json()["sessions"]:
+        if s["groupId"]:
+            everyone.setdefault(s["groupId"], []).append((s["seq"], s["taskId"]))
+    flat = [tuple(t for _, t in sorted(rows)) for rows in everyone.values()]
+    assert abs(flat.count(("energy_job_inquiry", "client_apology")) - flat.count(("client_apology", "energy_job_inquiry"))) <= 1
+    assert len(set(seen)) == 2
+
+    first, second = sorted(next(iter(orders.values())))[:2]
+    s1 = next(s for s in created if s["participantId"] == first[2] and s["seq"] == 1)
+    s2 = next(s for s in created if s["participantId"] == first[2] and s["seq"] == 2)
+    p = TestClient(app)
+    view = p.get(f"/api/sessions/{s1['id']}", params={"t": s1["token"]}).json()
+    assert view["sequence"] == {"index": 1, "total": 2, "next": None}  # no link onward before review
+
+    long_draft = DRAFT + " " + "More words here. " * 10
+    revised = REVISED + " " + "More words here. " * 10
+    monkeypatch.setattr(llm.httpx, "post", FakeKimi([
+        {"revised": revised.strip(), "changes": CHANGES},
+        {"changes": [{"id": "1", "type": "content", "explanation": "x"}]},
+    ]))
+    view = p.post(f"/api/sessions/{s1['id']}/enhance", params={"t": s1["token"]}, json={"text": long_draft}).json()
+    assert view["sequence"]["next"] == {"id": s2["id"], "token": s2["token"]}
+    last = p.get(f"/api/sessions/{s2['id']}", params={"t": s2["token"]}).json()
+    assert last["sequence"]["index"] == 2 and last["sequence"]["next"] is None
+
+    assert p.post(f"/api/sessions/{s1['id']}/events", params={"t": s1["token"]},
+                  json={"events": [{"ts": "x", "type": "paste", "payload": {"chars": 5}},
+                                   {"ts": "x", "type": "next_task"}]}).json()["stored"] == 1  # paste is not stored
+    header = c.get("/api/admin/export", params={"format": "csv"}).text.splitlines()[0]
+    assert "group_id" in header and "task_seq" in header
+
+
+def test_single_task_sessions_for_piloting():
+    c = TestClient(app)
+    c.post("/api/auth/login", json={"password": "pw"})
+    created = c.post("/api/admin/sessions", json={"participantIds": ["pilot"], "taskId": "client_apology"}).json()["created"]
+    assert len(created) == 1 and created[0]["taskId"] == "client_apology" and created[0]["groupId"] is None

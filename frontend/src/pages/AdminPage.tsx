@@ -32,7 +32,8 @@ function Login({ onDone }: { onDone(): void }) {
 
 function CreateCard({ data, onCreated }: { data: AdminData; onCreated(): void }) {
   const [ids, setIds] = useState('');
-  const [taskId, setTaskId] = useState(Object.keys(data.tasks)[0] ?? '');
+  // '' = every study task in a random order per participant; a task id = that task alone (piloting).
+  const [taskId, setTaskId] = useState('');
   const [created, setCreated] = useState<SessionSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const list = ids.split(/[\s,]+/).filter(Boolean);
@@ -40,7 +41,7 @@ function CreateCard({ data, onCreated }: { data: AdminData; onCreated(): void })
   const run = async () => {
     setError(null);
     try {
-      setCreated((await api.createSessions(list, taskId)).created);
+      setCreated((await api.createSessions(list, taskId || null)).created.filter((s) => (s.seq ?? 1) === 1));
       setIds('');
       onCreated();
     } catch (e) {
@@ -52,7 +53,8 @@ function CreateCard({ data, onCreated }: { data: AdminData; onCreated(): void })
     <section className="card">
       <h2>Create sessions</h2>
       <p className={styles.sub}>
-        Each participant writes their own draft for the task, the AI revises it, and they review the changes.{' '}
+        Each participant writes their own draft for each task, the AI revises it, and they review the changes. With
+        all tasks, the order is randomized and balanced across participants, and one link leads through every task.{' '}
         {data.aiConfigured ? (
           <span className="ok">AI model: {data.aiModel} (falls back left to right)</span>
         ) : (
@@ -69,9 +71,10 @@ function CreateCard({ data, onCreated }: { data: AdminData; onCreated(): void })
           onChange={(e) => setIds(e.target.value)}
         />
         <select value={taskId} onChange={(e) => setTaskId(e.target.value)} aria-label="Task">
-          {Object.entries(data.tasks).map(([k, title]) => <option key={k} value={k}>{title}</option>)}
+          <option value="">All {data.studyTasks.length} tasks, random order</option>
+          {Object.entries(data.tasks).map(([k, title]) => <option key={k} value={k}>Only: {title}</option>)}
         </select>
-        <button className="btn primary" onClick={run} disabled={!list.length}>Create {list.length > 1 ? `${list.length} sessions` : 'session'}</button>
+        <button className="btn primary" onClick={run} disabled={!list.length}>Create for {list.length > 1 ? `${list.length} participants` : 'participant'}</button>
       </div>
       {error && <p className="err">{error}</p>}
       {created.length > 0 && (
@@ -174,7 +177,10 @@ function SessionRow({ s, tasks, onChange }: { s: SessionSummary; tasks: Record<s
         <div className={`faint ${styles.mono}`}>{s.id}{s.sourceId ? ` · ${s.sourceId}` : ''}</div>
         {s.warnings.map((w, i) => <p key={i} className={styles.warn}>⚠ {w}</p>)}
       </td>
-      <td>{s.taskId ? tasks[s.taskId] ?? s.taskId : <span className="faint">Imported</span>}</td>
+      <td>
+        {s.taskId ? tasks[s.taskId] ?? s.taskId : <span className="faint">Imported</span>}
+        {s.seq != null && <div className="faint">Task {s.seq}{s.seq === 1 ? ' · send this link' : ''}</div>}
+      </td>
       <td>{STAGE[s.stage]}</td>
       <td className={styles.num}>{s.draftWords || '—'}</td>
       <td className={styles.num}>{s.stage === 'review' ? <>{s.editCount}<span className="faint"> (+{s.grammarCount} grammar)</span></> : '—'}</td>

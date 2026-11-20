@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import itertools
 import json
 import secrets
 from datetime import datetime, timezone
@@ -21,13 +22,13 @@ from pydantic import BaseModel, Field  # noqa: E402
 
 from . import auth, db, llm  # noqa: E402
 from .importer import RecordError, build_content, iter_records  # noqa: E402
-from .tasks import DEFAULT_TASK, TASKS  # noqa: E402
+from .tasks import STUDY_TASKS, TASKS  # noqa: E402
 
 app = FastAPI(title="CoWrite revision review")
 db.init()
 
 EVENT_TYPES = {
-    "session_start", "writing_start", "view", "pin", "unpin", "confirm", "correct_start", "correct_submit",
+    "session_start", "writing_start", "next_task", "view", "pin", "unpin", "confirm", "correct_start", "correct_submit",
     "correct_redo", "correct_fail", "undo", "session_end",
 }
 # Written by the server only: draft_submit, enhance_done, enhance_fail.
@@ -57,6 +58,21 @@ def word_count(text: str) -> int:
     return len(text.split())
 
 
+def sequence_info(conn, s: dict) -> dict | None:
+    """Position in the participant's task order. The next task's link is only handed out once this
+    session has reached review, so a participant can't skip ahead."""
+    if not s.get("group_id"):
+        return None
+    rows = conn.execute("SELECT id, seq, participant_token FROM sessions WHERE group_id = ? ORDER BY seq",
+                        (s["group_id"],)).fetchall()
+    nxt = next((r for r in rows if r["seq"] > s["seq"]), None)
+    return {
+        "index": s["seq"],
+        "total": len(rows),
+        "next": {"id": nxt["id"], "token": nxt["participant_token"]} if nxt and s["stage"] == "review" else None,
+    }
+
+
 def participant_view(conn, s: dict, role: str) -> dict:
     """What the participant page receives. Judge results and raw model output stay server-side."""
     view: dict[str, Any] = {
@@ -65,6 +81,7 @@ def participant_view(conn, s: dict, role: str) -> dict:
         "stage": s["stage"],
         "task": TASKS.get(s["task_id"] or ""),
         "role": role,
+        "sequence": sequence_info(conn, s),
     }
     if s["stage"] != "review":
         view["draft"] = s["draft"]
@@ -252,8 +269,7 @@ def start_demo():
     if not demo_enabled():
         raise HTTPException(status_code=404, detail="Demo mode is off (set COWRITE_DEMO=1 in backend/.env).")
     with db.connect() as conn:
-        s = insert_session(conn, participant_id=f"demo-{secrets.token_hex(2)}", task_id=DEFAULT_TASK,
-                           source="task", stage="writing")
+        s = insert_task_sequence(conn, f"demo-{secrets.token_hex(2)}")[0]
         return {"id": s["id"], "token": s["participant_token"]}
 
 
@@ -280,6 +296,8 @@ def session_summary(conn, s: dict) -> dict:
         "warnings": s["warnings"],
         "token": s["participant_token"],
         "createdAt": s["created_at"],
+        "groupId": s.get("group_id"),
+        "seq": s.get("seq"),
     }
 
 
@@ -287,7 +305,8 @@ def insert_session(conn, **fields) -> dict:
     s = {
         "id": secrets.token_hex(4), "task_id": None, "draft": "", "original": None, "revised": None,
         "segments": None, "edits": None, "meta": {}, "source_id": None, "warnings": [],
-        "participant_token": auth.new_participant_token(), "created_at": now(), "enhanced_at": None, **fields,
+        "participant_token": auth.new_participant_token(), "created_at": now(), "enhanced_at": None,
+        "group_id": None, "seq": None, **fields,
     }
     cols = list(s)
     conn.execute(
@@ -300,29 +319,60 @@ def insert_session(conn, **fields) -> dict:
 @app.get("/api/admin/sessions", dependencies=[Depends(auth.require_admin)])
 def list_sessions():
     with db.connect() as conn:
-        rows = [db.row_to_dict(r) for r in conn.execute("SELECT * FROM sessions ORDER BY created_at DESC, id")]
+        rows = [db.row_to_dict(r) for r in conn.execute("SELECT * FROM sessions ORDER BY created_at DESC, group_id, seq, id")]
         return {
             "sessions": [session_summary(conn, s) for s in rows],
             "tasks": {k: v["title"] for k, v in TASKS.items()},
+            "studyTasks": STUDY_TASKS,
             "aiConfigured": bool(llm.configured_providers()),
             "aiModel": " → ".join(f"{p['name']}:{p['model']}" for p in llm.configured_providers()),
         }
 
 
+def pick_order(conn) -> list[str]:
+    """Counterbalanced random order of STUDY_TASKS: a random choice among the orders used least so far,
+    so with two tasks each consecutive pair of participants gets one of each order."""
+    orders = list(itertools.permutations(STUDY_TASKS))
+    groups: dict[str, list[str]] = {}
+    for r in conn.execute("SELECT group_id, task_id FROM sessions WHERE group_id IS NOT NULL ORDER BY group_id, seq"):
+        groups.setdefault(r["group_id"], []).append(r["task_id"])
+    used = {o: 0 for o in orders}
+    for tasks in groups.values():
+        if tuple(tasks) in used:
+            used[tuple(tasks)] += 1
+    fewest = min(used.values())
+    return list(secrets.choice([o for o in orders if used[o] == fewest]))
+
+
+def insert_task_sequence(conn, participant_id: str) -> list[dict]:
+    """One writing session per study task, linked by group_id, in a counterbalanced random order."""
+    group = secrets.token_hex(4)
+    return [
+        insert_session(conn, participant_id=participant_id, task_id=task_id, source="task", stage="writing",
+                       group_id=group, seq=n)
+        for n, task_id in enumerate(pick_order(conn), start=1)
+    ]
+
+
 class CreateBody(BaseModel):
     participantIds: list[str] = Field(min_length=1, max_length=500)
-    taskId: str = DEFAULT_TASK
+    # None: every study task in a random order (the study setup). A task id: that task alone (for piloting).
+    taskId: str | None = None
 
 
 @app.post("/api/admin/sessions", dependencies=[Depends(auth.require_admin)])
 def create_sessions(body: CreateBody):
-    if body.taskId not in TASKS:
+    if body.taskId is not None and body.taskId not in TASKS:
         raise HTTPException(status_code=400, detail=f"Unknown task {body.taskId!r}.")
     with db.connect() as conn:
         created = []
         for pid in body.participantIds:
             pid = pid.strip()
-            if pid:
+            if not pid:
+                continue
+            if body.taskId is None:
+                created += [session_summary(conn, s) for s in insert_task_sequence(conn, pid)]
+            else:
                 s = insert_session(conn, participant_id=pid, task_id=body.taskId, source="task", stage="writing")
                 created.append(session_summary(conn, s))
         return {"created": created}
@@ -393,7 +443,7 @@ def delete_session(session_id: str):
 
 
 CSV_COLUMNS = [
-    "session_id", "participant_id", "task_id", "stage", "actor", "event_seq", "client_ts", "server_ts",
+    "session_id", "participant_id", "group_id", "task_seq", "task_id", "stage", "actor", "event_seq", "client_ts", "server_ts",
     "type", "edit_id", "edit_kind", "edit_original", "edit_revised", "explanation", "explanation_mode",
     "modality", "text", "error", "payload",
 ]
@@ -404,7 +454,7 @@ def export_data(session_id: str | None) -> list[dict]:
         if session_id:
             sessions = [load_session(conn, session_id)]
         else:
-            sessions = [db.row_to_dict(r) for r in conn.execute("SELECT * FROM sessions ORDER BY created_at, id")]
+            sessions = [db.row_to_dict(r) for r in conn.execute("SELECT * FROM sessions ORDER BY created_at, group_id, seq, id")]
         out = []
         for s in sessions:
             decisions = [dict(r) for r in conn.execute("SELECT * FROM decisions WHERE session_id = ? ORDER BY ts", (s["id"],))]
@@ -433,7 +483,8 @@ def export(format: Literal["json", "csv"] = "json", sessionId: str | None = None
             explanation = edit.get("explanation") or {}
             payload = ev["payload"] or {}
             w.writerow({
-                "session_id": s["id"], "participant_id": s["participant_id"], "task_id": s["task_id"],
+                "session_id": s["id"], "participant_id": s["participant_id"], "group_id": s.get("group_id"),
+                "task_seq": s.get("seq"), "task_id": s["task_id"],
                 "stage": ev["stage"], "actor": ev["actor"], "event_seq": ev["id"], "client_ts": ev["client_ts"],
                 "server_ts": ev["server_ts"], "type": ev["type"], "edit_id": ev["edit_id"], "edit_kind": edit.get("kind"),
                 "edit_original": edit.get("original"), "edit_revised": edit.get("revised"),
