@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at TEXT NOT NULL,
   enhanced_at TEXT,
   group_id TEXT,                  -- links one participant's task sessions
-  seq INTEGER                     -- 1-based position in that participant's task order
+  seq INTEGER,                    -- 1-based position in that participant's task order
+  condition TEXT                  -- 'reasons' | 'noReasons'; NULL shows explanations
 );
 CREATE TABLE IF NOT EXISTS decisions (
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -62,7 +63,7 @@ def init() -> None:
         conn.executescript(SCHEMA)
         # Databases created before multi-task sessions lack these columns.
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(sessions)")}
-        for col, typ in (("group_id", "TEXT"), ("seq", "INTEGER")):
+        for col, typ in (("group_id", "TEXT"), ("seq", "INTEGER"), ("condition", "TEXT")):
             if col not in cols:
                 conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} {typ}")
 
