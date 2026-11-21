@@ -1,0 +1,8 @@
+# Daily database backup, run by cowrite-backup.timer. Same path/user assumptions as cowrite.service.
+[Unit]
+Description=Back up the CoWrite database
+
+[Service]
+Type=oneshot
+User=cowrite
+ExecStart=/srv/cowrite/backend/.venv/bin/python /srv/cowrite/deploy/backup.py --keep 30

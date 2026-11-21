@@ -25,6 +25,8 @@ npm run dev
 
 For a single-server setup, run `npm run build` in `frontend/`. FastAPI then serves `frontend/dist` on :8000.
 
+**Deploying for the study:** see [`deploy/README.md`](deploy/README.md). It covers the lab machine, systemd, HTTPS via Cloudflare Tunnel or Caddy, daily backups, and a pre-launch checklist.
+
 Settings go in `backend/.env` (template: `backend/.env.example`). Restart the backend after you edit it.
 
 | Variable | Default | |
@@ -36,6 +38,7 @@ Settings go in `backend/.env` (template: `backend/.env.example`). Restart the ba
 | `COWRITE_ADMIN_PASSWORD` | `admin` | Researcher login. Change it before running a study. |
 | `COWRITE_SECRET` | `dev-secret-change-me` | Signs the admin cookie |
 | `COWRITE_DB` | `backend/data/cowrite.db` | SQLite file |
+| `COWRITE_PRODUCTION` | `0` | Set to `1` on the deployed server. The admin cookie is then sent over HTTPS only, and the server won't start with the default password or secret, or with demo mode on |
 | `COWRITE_ABANDON_HOURS` | `24` | A participant who started this long ago without finishing no longer counts toward balance |
 
 ## Tasks and prompts

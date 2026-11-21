@@ -9,10 +9,30 @@ import time
 
 from fastapi import HTTPException, Request
 
-SECRET = os.environ.get("COWRITE_SECRET", "dev-secret-change-me")
-ADMIN_PASSWORD = os.environ.get("COWRITE_ADMIN_PASSWORD", "admin")
+DEFAULT_SECRET = "dev-secret-change-me"
+DEFAULT_PASSWORD = "admin"
+SECRET = os.environ.get("COWRITE_SECRET", DEFAULT_SECRET)
+ADMIN_PASSWORD = os.environ.get("COWRITE_ADMIN_PASSWORD", DEFAULT_PASSWORD)
 COOKIE = "cowrite_admin"
 TTL_SECONDS = 12 * 3600
+
+# COWRITE_PRODUCTION=1 on the deployed server: the admin cookie is sent over HTTPS only, and the
+# server refuses to start with the development defaults.
+PRODUCTION = os.environ.get("COWRITE_PRODUCTION", "").strip().lower() in ("1", "true", "yes")
+
+
+def check_production_config() -> None:
+    if not PRODUCTION:
+        return
+    problems = []
+    if SECRET == DEFAULT_SECRET or len(SECRET) < 32:
+        problems.append("set COWRITE_SECRET to a random string of at least 32 characters")
+    if ADMIN_PASSWORD == DEFAULT_PASSWORD or len(ADMIN_PASSWORD) < 12:
+        problems.append("set COWRITE_ADMIN_PASSWORD to a password of at least 12 characters")
+    if os.environ.get("COWRITE_DEMO", "").strip().lower() in ("1", "true", "yes"):
+        problems.append("set COWRITE_DEMO=0")
+    if problems:
+        raise RuntimeError("COWRITE_PRODUCTION is on, but: " + "; ".join(problems) + " (in backend/.env).")
 
 
 def _sign(value: str) -> str:

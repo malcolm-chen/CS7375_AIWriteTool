@@ -411,3 +411,21 @@ def test_no_reasons_hides_change_index(monkeypatch):
     view = TestClient(app).post(f"/api/sessions/{s['id']}/enhance", params={"t": s["token"]},
                                 json={"text": DRAFT + " " + "More words here. " * 10}).json()
     assert all("changeIndex" not in e and e["explanation"] is None for e in view["edits"].values())
+
+
+def test_production_mode_refuses_development_defaults():
+    import subprocess
+    import sys
+
+    def start(**env):
+        full = {**os.environ, "COWRITE_ENV_FILE": os.devnull, "COWRITE_PRODUCTION": "1", "COWRITE_DEMO": "0", **env}
+        for k in ("COWRITE_SECRET", "COWRITE_ADMIN_PASSWORD"):
+            if full.get(k) is None:
+                full.pop(k, None)
+        return subprocess.run([sys.executable, "-c", "import app.main"], env=full, capture_output=True, text=True,
+                              cwd=Path(__file__).resolve().parents[1])
+
+    bad = start(COWRITE_SECRET=None, COWRITE_ADMIN_PASSWORD=None)
+    assert bad.returncode != 0 and "COWRITE_SECRET" in bad.stderr and "COWRITE_ADMIN_PASSWORD" in bad.stderr
+    assert "COWRITE_DEMO=0" in start(COWRITE_SECRET="s" * 40, COWRITE_ADMIN_PASSWORD="p" * 12, COWRITE_DEMO="1").stderr
+    assert start(COWRITE_SECRET="s" * 40, COWRITE_ADMIN_PASSWORD="p" * 12).returncode == 0
