@@ -39,8 +39,15 @@ TASKS: dict[str, dict] = {
 
 DEFAULT_TASK = "energy_job_inquiry"
 
-# Every participant writes all of these, in an order randomized per participant (see main.pick_order).
+# Every participant writes all of these, in an order randomized per participant (see assignment.py).
 STUDY_TASKS = ["energy_job_inquiry", "client_apology"]
+
+# Explanation conditions, one per task for each participant. Which task gets which condition is
+# randomized and counterbalanced together with the task order.
+#   reasons:   hovering an edit shows the AI's explanation.
+#   noReasons: the explanation is withheld server-side; the participant sees a neutral question instead.
+# The AI still writes explanations in both conditions; they are stored and exported, only not shown.
+STUDY_CONDITIONS = ["reasons", "noReasons"]
 
 
 def task_brief(task: dict) -> str:

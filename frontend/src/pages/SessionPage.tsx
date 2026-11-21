@@ -45,7 +45,9 @@ export function SessionPage() {
             ? 'This link is not valid. Ask the researcher for a new one.'
             : e instanceof ApiError && e.status === 404
               ? 'Session not found.'
-              : 'Could not load the session.',
+              : e instanceof ApiError && e.status === 409
+                ? e.message
+                : 'Could not load the session.',
         ),
       );
     return () => {
@@ -79,18 +81,23 @@ export function SessionPage() {
   const showAdmin = isAdmin && adminOpen;
   const toggleAdmin = isAdmin ? () => setAdminOpen((o) => !o) : undefined;
   const seq = view.sequence;
-  const step = (s: string) => (seq && seq.total > 1 ? `${S.taskOf(seq.index, seq.total)} · ${s}` : s);
+  // Multi-task: "Task 1 of 2 · Write"; single task: "Step 1 of 2 · Write".
+  const step = (single: string, short: string) => (seq && seq.total > 1 ? `${S.taskOf(seq.index, seq.total)} · ${short}` : single);
 
   if (view.stage !== 'review') {
     return (
       <>
-        <Header title={S.writeTitle} step={view.task ? step(S.stepWrite) : undefined} adminOpen={showAdmin} onToggleAdmin={toggleAdmin} />
+        <Header title={S.writeTitle} step={view.task ? step(S.stepWrite, S.write) : undefined} adminOpen={showAdmin} onToggleAdmin={toggleAdmin} />
         <div className={`${styles.layout} ${showAdmin ? styles.adminOpen : ''}`}>
           <main>
             {view.task ? (
               <WritingStage view={view} token={token} logger={logger} onChange={onChange} />
             ) : (
-              <p className="center-msg">This session has no writing task.</p>
+              <p className="center-msg">
+                {view.sequence
+                  ? 'Not assigned yet. The task order and conditions are assigned when the participant first opens their link.'
+                  : 'This session has no writing task.'}
+              </p>
             )}
           </main>
           {showAdmin && <AdminPanel view={view} />}
@@ -102,7 +109,7 @@ export function SessionPage() {
   if (!reviewSession || reviewSession.id !== id) return <p className="center-msg">Loading…</p>;
   return (
     <>
-      <Header title={S.title} step={view.task ? step(S.stepReview) : undefined} adminOpen={showAdmin} onToggleAdmin={toggleAdmin}>
+      <Header title={S.title} step={view.task ? step(S.stepReview, S.review) : undefined} adminOpen={showAdmin} onToggleAdmin={toggleAdmin}>
         <ReviewHeaderExtras />
       </Header>
       <div className={`${styles.layout} ${showAdmin ? styles.adminOpen : ''}`}>

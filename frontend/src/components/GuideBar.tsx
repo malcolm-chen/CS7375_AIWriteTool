@@ -14,7 +14,7 @@ export function GuideBar() {
   const next = nextUndecided(session, active);
   const seq = session.sequence;
   const nextTask = seq?.next ?? null;
-  const lastTask = !!seq && seq.total > 1 && !nextTask;
+  const lastTask = !!seq && seq.total > 1 && seq.index === seq.total;
 
   const continueButton = nextTask && (
     <button

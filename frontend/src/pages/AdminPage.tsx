@@ -1,8 +1,71 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError, participantLink } from '../api';
-import type { SessionSummary } from '../types';
+import type { GroupStatus, SessionSummary } from '../types';
 import styles from './Admin.module.css';
+
+const CONDITION = { reasons: 'With AI explanations', noReasons: 'No explanations' } as const;
+const conditionLabel = (c: string) => CONDITION[c as keyof typeof CONDITION] ?? c;
+const GROUP_STATUS: Record<GroupStatus, string> = {
+  unassigned: 'Link not opened yet',
+  in_progress: 'In progress',
+  completed: 'Completed',
+  abandoned: 'Abandoned, not counted',
+  invalid: 'Incomplete task set, can’t be assigned',
+};
+
+/** How many participants are in each assignment, so the researcher can see the study stays balanced. */
+function BalanceCard({ data }: { data: AdminData }) {
+  const b = data.balance;
+  const title = (id: string) => data.tasks[id] ?? id;
+  return (
+    <section className="card">
+      <h2>Balance</h2>
+      <p className={styles.sub}>
+        Each participant is assigned when they first open their link, to the order used least among participants
+        still in the study: completed, or started less than {b.abandonHours} h ago. Anyone who started earlier and
+        hasn’t finished counts as abandoned, and their slot goes to the next participant. Demo sessions don’t count.
+        {b.unopened > 0 && <> {b.unopened} link{b.unopened === 1 ? '' : 's'} not opened yet.</>}
+      </p>
+      <div className={styles.tableWrap}>
+        <table className={styles.table}>
+          <thead>
+            <tr><th>Task 1</th><th>Task 2</th><th>Completed</th><th>In progress</th><th>Abandoned</th></tr>
+          </thead>
+          <tbody>
+            {b.cells.map((cell, i) => (
+              <tr key={i}>
+                {cell.assignment.map((a, j) => (
+                  <td key={j}>{title(a.taskId)}<div className="faint">{conditionLabel(a.condition)}</div></td>
+                ))}
+                <td className={styles.num}>{cell.completed}</td>
+                <td className={styles.num}>{cell.in_progress}</td>
+                <td className={`${styles.num} faint`}>{cell.abandoned}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className={styles.tableWrap}>
+        <table className={styles.table} style={{ marginTop: 16 }}>
+          <thead>
+            <tr><th>Task</th><th>Condition</th><th>Completed</th><th>In progress</th></tr>
+          </thead>
+          <tbody>
+            {b.byTaskCondition.map((x) => (
+              <tr key={`${x.taskId}-${x.condition}`}>
+                <td>{title(x.taskId)}</td>
+                <td>{conditionLabel(x.condition)}</td>
+                <td className={styles.num}>{x.completed}</td>
+                <td className={styles.num}>{x.in_progress}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
 
 type AdminData = Awaited<ReturnType<typeof api.sessions>>;
 
@@ -34,6 +97,7 @@ function CreateCard({ data, onCreated }: { data: AdminData; onCreated(): void })
   const [ids, setIds] = useState('');
   // '' = every study task in a random order per participant; a task id = that task alone (piloting).
   const [taskId, setTaskId] = useState('');
+  const [condition, setCondition] = useState('reasons');
   const [created, setCreated] = useState<SessionSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const list = ids.split(/[\s,]+/).filter(Boolean);
@@ -41,7 +105,8 @@ function CreateCard({ data, onCreated }: { data: AdminData; onCreated(): void })
   const run = async () => {
     setError(null);
     try {
-      setCreated((await api.createSessions(list, taskId || null)).created.filter((s) => (s.seq ?? 1) === 1));
+      const res = await api.createSessions(list, taskId || null, taskId ? condition : null);
+      setCreated(res.created.filter((s) => (s.seq ?? 1) === 1));
       setIds('');
       onCreated();
     } catch (e) {
@@ -54,7 +119,8 @@ function CreateCard({ data, onCreated }: { data: AdminData; onCreated(): void })
       <h2>Create sessions</h2>
       <p className={styles.sub}>
         Each participant writes their own draft for each task, the AI revises it, and they review the changes. With
-        all tasks, the order is randomized and balanced across participants, and one link leads through every task.{' '}
+        all tasks, one link leads through every task. The task order and which task shows the AI’s explanations are
+        assigned when the participant first opens the link, balanced across participants (see Balance below).{' '}
         {data.aiConfigured ? (
           <span className="ok">AI model: {data.aiModel} (falls back left to right)</span>
         ) : (
@@ -74,6 +140,11 @@ function CreateCard({ data, onCreated }: { data: AdminData; onCreated(): void })
           <option value="">All {data.studyTasks.length} tasks, random order</option>
           {Object.entries(data.tasks).map(([k, title]) => <option key={k} value={k}>Only: {title}</option>)}
         </select>
+        {taskId && (
+          <select value={condition} onChange={(e) => setCondition(e.target.value)} aria-label="Explanation condition">
+            {data.studyConditions.map((c) => <option key={c} value={c}>{conditionLabel(c)}</option>)}
+          </select>
+        )}
         <button className="btn primary" onClick={run} disabled={!list.length}>Create for {list.length > 1 ? `${list.length} participants` : 'participant'}</button>
       </div>
       {error && <p className="err">{error}</p>}
@@ -158,7 +229,12 @@ function ImportCard({ onImported }: { onImported(): void }) {
 
 const STAGE = { writing: 'Writing', enhancing: 'AI revising', review: 'Reviewing' };
 
-function SessionRow({ s, tasks, onChange }: { s: SessionSummary; tasks: Record<string, string>; onChange(): void }) {
+function SessionRow({ s, tasks, status, onChange }: {
+  s: SessionSummary;
+  tasks: Record<string, string>;
+  status?: GroupStatus;
+  onChange(): void;
+}) {
   const [copied, setCopied] = useState(false);
   const act = async (fn: () => Promise<unknown>, question?: string) => {
     if (question && !confirm(question)) return;
@@ -175,11 +251,19 @@ function SessionRow({ s, tasks, onChange }: { s: SessionSummary; tasks: Record<s
       <td>
         <div>{s.participantId}</div>
         <div className={`faint ${styles.mono}`}>{s.id}{s.sourceId ? ` · ${s.sourceId}` : ''}</div>
+        {s.seq === 1 && status && <div className="faint">{GROUP_STATUS[status]}{s.demo ? ' · demo' : ''}</div>}
         {s.warnings.map((w, i) => <p key={i} className={styles.warn}>⚠ {w}</p>)}
       </td>
       <td>
-        {s.taskId ? tasks[s.taskId] ?? s.taskId : <span className="faint">Imported</span>}
+        {s.taskId ? (
+          tasks[s.taskId] ?? s.taskId
+        ) : s.groupId ? (
+          <span className="faint">Assigned when opened</span>
+        ) : (
+          <span className="faint">Imported</span>
+        )}
         {s.seq != null && <div className="faint">Task {s.seq}{s.seq === 1 ? ' · send this link' : ''}</div>}
+        {s.condition && <div className="faint">{conditionLabel(s.condition)}</div>}
       </td>
       <td>{STAGE[s.stage]}</td>
       <td className={styles.num}>{s.draftWords || '—'}</td>
@@ -194,7 +278,14 @@ function SessionRow({ s, tasks, onChange }: { s: SessionSummary; tasks: Record<s
           <a className="btn small" href={api.exportUrl('csv', s.id)}>CSV</a>
           <button className="btn small" onClick={() => act(() => api.regenerateLink(s.id), 'Create a new participant link? The old link stops working.')}>New link</button>
           <button className="btn small" onClick={() => act(() => api.reset(s.id), 'Reset this session? Decisions and events are cleared; task sessions also go back to an empty draft.')}>Reset</button>
-          <button className="btn small danger" onClick={() => act(() => api.remove(s.id), 'Delete this session and all its data?')}>Delete</button>
+          <button
+            className="btn small danger"
+            onClick={() => act(() => api.remove(s.id), s.groupId
+              ? `Delete participant ${s.participantId}? All of their task sessions and data are deleted.`
+              : 'Delete this session and all its data?')}
+          >
+            Delete
+          </button>
         </div>
       </td>
     </tr>
@@ -233,6 +324,7 @@ export function AdminPage() {
         <button className="btn" onClick={async () => { await api.logout(); setRole(null); }}>Log out</button>
       </div>
       <CreateCard data={data} onCreated={load} />
+      <BalanceCard data={data} />
       <section className="card">
         <div className={styles.row} style={{ justifyContent: 'space-between' }}>
           <h2>Sessions</h2>
@@ -248,7 +340,9 @@ export function AdminPage() {
                 <tr><th>Participant</th><th>Task</th><th>Stage</th><th>Draft words</th><th>Edits</th><th>Reviewed</th><th>Events</th><th>Actions</th></tr>
               </thead>
               <tbody>
-                {data.sessions.map((s) => <SessionRow key={s.id} s={s} tasks={data.tasks} onChange={load} />)}
+                {data.sessions.map((s) => (
+                  <SessionRow key={s.id} s={s} tasks={data.tasks} status={s.groupId ? data.balance.groups[s.groupId] : undefined} onChange={load} />
+                ))}
               </tbody>
             </table>
           </div>

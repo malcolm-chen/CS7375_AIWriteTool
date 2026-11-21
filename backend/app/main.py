@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 import io
-import itertools
 import json
 import secrets
 from datetime import datetime, timezone
@@ -20,9 +19,9 @@ from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
-from . import auth, db, llm  # noqa: E402
+from . import assignment, auth, db, llm  # noqa: E402
 from .importer import RecordError, build_content, iter_records  # noqa: E402
-from .tasks import STUDY_TASKS, TASKS  # noqa: E402
+from .tasks import STUDY_CONDITIONS, STUDY_TASKS, TASKS  # noqa: E402
 
 app = FastAPI(title="CoWrite revision review")
 db.init()
@@ -31,7 +30,7 @@ EVENT_TYPES = {
     "session_start", "writing_start", "next_task", "view", "pin", "unpin", "confirm", "correct_start", "correct_submit",
     "correct_redo", "correct_fail", "undo", "session_end",
 }
-# Written by the server only: draft_submit, enhance_done, enhance_fail.
+# Written by the server only: assigned, draft_submit, enhance_done, enhance_fail.
 
 
 def now() -> str:
@@ -58,9 +57,10 @@ def word_count(text: str) -> int:
     return len(text.split())
 
 
-def sequence_info(conn, s: dict) -> dict | None:
+def sequence_info(conn, s: dict, role: str) -> dict | None:
     """Position in the participant's task order. The next task's link is only handed out once this
-    session has reached review, so a participant can't skip ahead."""
+    session has reached review, so a participant can't skip ahead, and only to the participant: it
+    carries their token, and an admin following it would act as them in their real next task."""
     if not s.get("group_id"):
         return None
     rows = conn.execute("SELECT id, seq, participant_token FROM sessions WHERE group_id = ? ORDER BY seq",
@@ -69,7 +69,8 @@ def sequence_info(conn, s: dict) -> dict | None:
     return {
         "index": s["seq"],
         "total": len(rows),
-        "next": {"id": nxt["id"], "token": nxt["participant_token"]} if nxt and s["stage"] == "review" else None,
+        "next": ({"id": nxt["id"], "token": nxt["participant_token"]}
+                 if nxt and s["stage"] == "review" and role == "participant" else None),
     }
 
 
@@ -81,12 +82,16 @@ def participant_view(conn, s: dict, role: str) -> dict:
         "stage": s["stage"],
         "task": TASKS.get(s["task_id"] or ""),
         "role": role,
-        "sequence": sequence_info(conn, s),
+        "sequence": sequence_info(conn, s, role),
     }
     if s["stage"] != "review":
         view["draft"] = s["draft"]
         return view
     edits = {eid: {k: v for k, v in e.items() if k != "judge"} for eid, e in s["edits"].items()}
+    if s.get("condition") == "noReasons":
+        # Withheld here, not just hidden in the UI, so the explanations never reach the browser.
+        # changeIndex would reveal which edits share an explanation.
+        edits = {eid: {**{k: v for k, v in e.items() if k != "changeIndex"}, "explanation": None} for eid, e in edits.items()}
     decisions = {
         r["edit_id"]: {"editId": r["edit_id"], "type": r["type"], "modality": r["modality"], "text": r["text"], "ts": r["ts"]}
         for r in conn.execute("SELECT * FROM decisions WHERE session_id = ?", (s["id"],))
@@ -127,6 +132,16 @@ def get_session(session_id: str, request: Request, t: str | None = None):
     with db.connect() as conn:
         s = load_session(conn, session_id)
         role = auth.session_role(request, s, t)
+        if role == "participant" and s.get("group_id") and not s["task_id"]:
+            # First open of this participant's link: assign task order and conditions now.
+            try:
+                assigned = assignment.assign_group(conn, s["group_id"])
+            except assignment.IncompleteGroup:
+                raise HTTPException(status_code=409, detail="This link is incomplete. Ask the researcher for a new one.")
+            s = load_session(conn, session_id)
+            if assigned:
+                insert_event(conn, s, "assigned", role, payload={
+                    "tasks": [t_ for t_, _ in assigned], "conditions": [c for _, c in assigned]})
         return participant_view(conn, s, role)
 
 
@@ -269,7 +284,7 @@ def start_demo():
     if not demo_enabled():
         raise HTTPException(status_code=404, detail="Demo mode is off (set COWRITE_DEMO=1 in backend/.env).")
     with db.connect() as conn:
-        s = insert_task_sequence(conn, f"demo-{secrets.token_hex(2)}")[0]
+        s = insert_task_sequence(conn, f"demo-{secrets.token_hex(2)}", demo=True)[0]
         return {"id": s["id"], "token": s["participant_token"]}
 
 
@@ -298,6 +313,9 @@ def session_summary(conn, s: dict) -> dict:
         "createdAt": s["created_at"],
         "groupId": s.get("group_id"),
         "seq": s.get("seq"),
+        "condition": s.get("condition"),
+        "assignedAt": s.get("assigned_at"),
+        "demo": bool(s.get("demo")),
     }
 
 
@@ -306,7 +324,7 @@ def insert_session(conn, **fields) -> dict:
         "id": secrets.token_hex(4), "task_id": None, "draft": "", "original": None, "revised": None,
         "segments": None, "edits": None, "meta": {}, "source_id": None, "warnings": [],
         "participant_token": auth.new_participant_token(), "created_at": now(), "enhanced_at": None,
-        "group_id": None, "seq": None, **fields,
+        "group_id": None, "seq": None, "condition": None, "assigned_at": None, "demo": 0, **fields,
     }
     cols = list(s)
     conn.execute(
@@ -324,46 +342,41 @@ def list_sessions():
             "sessions": [session_summary(conn, s) for s in rows],
             "tasks": {k: v["title"] for k, v in TASKS.items()},
             "studyTasks": STUDY_TASKS,
+            "studyConditions": STUDY_CONDITIONS,
+            "balance": assignment.balance_report(conn),
             "aiConfigured": bool(llm.configured_providers()),
             "aiModel": " → ".join(f"{p['name']}:{p['model']}" for p in llm.configured_providers()),
         }
 
 
-def pick_order(conn) -> list[str]:
-    """Counterbalanced random order of STUDY_TASKS: a random choice among the orders used least so far,
-    so with two tasks each consecutive pair of participants gets one of each order."""
-    orders = list(itertools.permutations(STUDY_TASKS))
-    groups: dict[str, list[str]] = {}
-    for r in conn.execute("SELECT group_id, task_id FROM sessions WHERE group_id IS NOT NULL ORDER BY group_id, seq"):
-        groups.setdefault(r["group_id"], []).append(r["task_id"])
-    used = {o: 0 for o in orders}
-    for tasks in groups.values():
-        if tuple(tasks) in used:
-            used[tuple(tasks)] += 1
-    fewest = min(used.values())
-    return list(secrets.choice([o for o in orders if used[o] == fewest]))
-
-
-def insert_task_sequence(conn, participant_id: str) -> list[dict]:
-    """One writing session per study task, linked by group_id, in a counterbalanced random order."""
+def insert_task_sequence(conn, participant_id: str, *, demo: bool = False) -> list[dict]:
+    """One writing session per study task, linked by group_id. Tasks and conditions are left empty
+    until the participant first opens their link (see assignment.py); demo groups are assigned now."""
     group = secrets.token_hex(4)
-    return [
-        insert_session(conn, participant_id=participant_id, task_id=task_id, source="task", stage="writing",
-                       group_id=group, seq=n)
-        for n, task_id in enumerate(pick_order(conn), start=1)
+    sessions = [
+        insert_session(conn, participant_id=participant_id, task_id=None, source="task", stage="writing",
+                       group_id=group, seq=n, demo=int(demo))
+        for n in range(1, len(STUDY_TASKS) + 1)
     ]
+    if demo:
+        assignment.assign_group(conn, group, demo=True)
+    return sessions
 
 
 class CreateBody(BaseModel):
     participantIds: list[str] = Field(min_length=1, max_length=500)
     # None: every study task in a random order (the study setup). A task id: that task alone (for piloting).
     taskId: str | None = None
+    # Only with taskId: the explanation condition for that single session (None: "reasons").
+    condition: str | None = None
 
 
 @app.post("/api/admin/sessions", dependencies=[Depends(auth.require_admin)])
 def create_sessions(body: CreateBody):
     if body.taskId is not None and body.taskId not in TASKS:
         raise HTTPException(status_code=400, detail=f"Unknown task {body.taskId!r}.")
+    if body.condition is not None and body.condition not in STUDY_CONDITIONS:
+        raise HTTPException(status_code=400, detail=f"Unknown condition {body.condition!r}.")
     with db.connect() as conn:
         created = []
         for pid in body.participantIds:
@@ -373,7 +386,8 @@ def create_sessions(body: CreateBody):
             if body.taskId is None:
                 created += [session_summary(conn, s) for s in insert_task_sequence(conn, pid)]
             else:
-                s = insert_session(conn, participant_id=pid, task_id=body.taskId, source="task", stage="writing")
+                s = insert_session(conn, participant_id=pid, task_id=body.taskId, source="task", stage="writing",
+                                   condition=body.condition or "reasons")
                 created.append(session_summary(conn, s))
         return {"created": created}
 
@@ -417,7 +431,8 @@ def reset_session(session_id: str):
     with db.connect() as conn:
         s = load_session(conn, session_id)
         conn.execute("DELETE FROM decisions WHERE session_id = ?", (session_id,))
-        conn.execute("DELETE FROM events WHERE session_id = ?", (session_id,))
+        # The assignment survives a reset, so its record does too.
+        conn.execute("DELETE FROM events WHERE session_id = ? AND type != 'assigned'", (session_id,))
         if s["source"] == "task":
             conn.execute(
                 "UPDATE sessions SET stage = 'writing', draft = '', original = NULL, revised = NULL, segments = NULL,"
@@ -436,14 +451,19 @@ def regenerate_link(session_id: str):
 
 @app.delete("/api/admin/sessions/{session_id}", dependencies=[Depends(auth.require_admin)])
 def delete_session(session_id: str):
+    """Deletes the session, or for a participant with several tasks, all of their sessions: a group
+    with a task missing can't be assigned and would skew the balance counts."""
     with db.connect() as conn:
-        load_session(conn, session_id)
-        conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        s = load_session(conn, session_id)
+        if s.get("group_id"):
+            conn.execute("DELETE FROM sessions WHERE group_id = ?", (s["group_id"],))
+        else:
+            conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         return {"ok": True}
 
 
 CSV_COLUMNS = [
-    "session_id", "participant_id", "group_id", "task_seq", "task_id", "stage", "actor", "event_seq", "client_ts", "server_ts",
+    "session_id", "participant_id", "group_id", "task_seq", "task_id", "condition", "stage", "actor", "event_seq", "client_ts", "server_ts",
     "type", "edit_id", "edit_kind", "edit_original", "edit_revised", "explanation", "explanation_mode",
     "modality", "text", "error", "payload",
 ]
@@ -484,7 +504,7 @@ def export(format: Literal["json", "csv"] = "json", sessionId: str | None = None
             payload = ev["payload"] or {}
             w.writerow({
                 "session_id": s["id"], "participant_id": s["participant_id"], "group_id": s.get("group_id"),
-                "task_seq": s.get("seq"), "task_id": s["task_id"],
+                "task_seq": s.get("seq"), "task_id": s["task_id"], "condition": s.get("condition"),
                 "stage": ev["stage"], "actor": ev["actor"], "event_seq": ev["id"], "client_ts": ev["client_ts"],
                 "server_ts": ev["server_ts"], "type": ev["type"], "edit_id": ev["edit_id"], "edit_kind": edit.get("kind"),
                 "edit_original": edit.get("original"), "edit_revised": edit.get("revised"),
