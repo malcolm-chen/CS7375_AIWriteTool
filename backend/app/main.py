@@ -367,15 +367,15 @@ class CreateBody(BaseModel):
     participantIds: list[str] = Field(min_length=1, max_length=500)
     # None: every study task in a random order (the study setup). A task id: that task alone (for piloting).
     taskId: str | None = None
-    # Only with taskId: the explanation condition for that single session.
-    condition: str = "reasons"
+    # Only with taskId: the explanation condition for that single session (None: "reasons").
+    condition: str | None = None
 
 
 @app.post("/api/admin/sessions", dependencies=[Depends(auth.require_admin)])
 def create_sessions(body: CreateBody):
     if body.taskId is not None and body.taskId not in TASKS:
         raise HTTPException(status_code=400, detail=f"Unknown task {body.taskId!r}.")
-    if body.condition not in STUDY_CONDITIONS:
+    if body.condition is not None and body.condition not in STUDY_CONDITIONS:
         raise HTTPException(status_code=400, detail=f"Unknown condition {body.condition!r}.")
     with db.connect() as conn:
         created = []
@@ -387,7 +387,7 @@ def create_sessions(body: CreateBody):
                 created += [session_summary(conn, s) for s in insert_task_sequence(conn, pid)]
             else:
                 s = insert_session(conn, participant_id=pid, task_id=body.taskId, source="task", stage="writing",
-                                   condition=body.condition)
+                                   condition=body.condition or "reasons")
                 created.append(session_summary(conn, s))
         return {"created": created}
 

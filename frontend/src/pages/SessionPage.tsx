@@ -45,7 +45,9 @@ export function SessionPage() {
             ? 'This link is not valid. Ask the researcher for a new one.'
             : e instanceof ApiError && e.status === 404
               ? 'Session not found.'
-              : 'Could not load the session.',
+              : e instanceof ApiError && e.status === 409
+                ? e.message
+                : 'Could not load the session.',
         ),
       );
     return () => {
