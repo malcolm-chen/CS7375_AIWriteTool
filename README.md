@@ -36,13 +36,15 @@ Settings go in `backend/.env` (template: `backend/.env.example`). Restart the ba
 | `COWRITE_ADMIN_PASSWORD` | `admin` | Researcher login. Change it before running a study. |
 | `COWRITE_SECRET` | `dev-secret-change-me` | Signs the admin cookie |
 | `COWRITE_DB` | `backend/data/cowrite.db` | SQLite file |
+| `COWRITE_ABANDON_HOURS` | `24` | A participant who started this long ago without finishing no longer counts toward balance |
 
 ## Tasks and prompts
 
 - **Tasks** live in `backend/app/tasks.py`. Each task has a title, scenario, assignment and a minimum word count (40). There are two:
   - `energy_job_inquiry`: after a layoff, email the hiring inbox of a company where you know no one.
   - `client_apology`: apologize to an upset client's marketing director after your agency ran ads with the wrong discount.
-- **Order and explanation condition.** `STUDY_TASKS` in `tasks.py` lists the tasks every participant writes. Each participant gets one session per task, linked by a `group_id`. One task is written with the AI's explanations shown (`reasons`). The other shows the neutral question "Does this edit match what you meant?" instead (`noReasons`, see `STUDY_CONDITIONS`). In `noReasons` the server leaves the explanations out of what it sends, so they never reach the browser. They are still generated and exported. The task order and which task gets explanations are crossed into 2 × 2 = 4 assignments. The server picks at random among the assignments used least so far, so every four consecutive participants cover all four. Each session stores `group_id`, `seq` and `condition`. The participant's link opens task 1. After the review step, a "Next task" button leads to task 2. The link to the next task is only sent once the current task has reached review.
+- **Order and explanation condition.** `STUDY_TASKS` in `tasks.py` lists the tasks every participant writes. Each participant gets one session per task, linked by a `group_id`. One task is written with the AI's explanations shown (`reasons`). The other shows the neutral question "Does this edit match what you meant?" instead (`noReasons`, see `STUDY_CONDITIONS`). In `noReasons` the server leaves the explanations out of what it sends, so they never reach the browser. They are still generated and exported. The participant's link opens task 1. After the review step, a "Next task" button leads to task 2. The link to the next task is only sent once the current task has reached review.
+- **Balance** (`backend/app/assignment.py`). The task order and which task gets explanations are crossed into 2 × 2 = 4 assignments. A participant is assigned **when they first open their link**, not when the link is created, so links nobody opens take no slot. The server picks at random among the assignments with the fewest participants still in the study. That means completed participants plus those who started less than `COWRITE_ABANDON_HOURS` (default 24) ago. Anyone who started earlier and hasn't finished counts as abandoned, and their slot goes to the next participant. Completed means every task is in review and every highlighted edit has a decision. Demo sessions never count. Assignment takes a database write lock, so two participants opening their links at once can't both get the same slot. The "Balance" card on `/admin` shows completed, in-progress and abandoned counts per assignment and per task × condition. Each session stores `group_id`, `seq`, `condition` and `assigned_at`, and an `assigned` event records the assignment.
 - **Prompts** live in `backend/app/llm.py`. Each prompt has a version id, which is stored with every explanation.
   - `ENHANCE_SYSTEM` (`enhance-v1`) asks the model to revise the draft so it better accomplishes the task, and to return the full revision plus every change. Each change carries its exact fragments, a type (`grammar` or `content`), and a one-sentence explanation addressed to the writer.
   - `EXPLAIN_SYSTEM` (`explain-v1`) classifies and explains changes the model left out of its own list. These explanations are stored with `mode: "post_hoc"`; self-explanations use `mode: "self"`.
@@ -69,6 +71,7 @@ Accepted shapes: a list of records, `{"items": [...]}`, or an object keyed by re
 ## Data
 
 - **Events** carry the stage, actor, and both client and server timestamps:
+  - Assignment: `assigned` (task order and conditions, written by the server on first open).
   - Writing step: `session_start`, `writing_start`, `paste` (with character count), `draft_submit`, `enhance_done`, `enhance_fail`.
   - Review step: `view`, `pin`, `unpin`, `confirm`, `correct_start`, `correct_submit`, `correct_redo`, `correct_fail`, `undo`, `next_task`, `session_end`.
 - **JSON export:** the task, draft, revision, edits (with kind and explanation), the model's raw response, decisions, and events.

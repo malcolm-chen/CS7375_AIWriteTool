@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 import io
-import itertools
 import json
 import secrets
 from datetime import datetime, timezone
@@ -20,7 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
-from . import auth, db, llm  # noqa: E402
+from . import assignment, auth, db, llm  # noqa: E402
 from .importer import RecordError, build_content, iter_records  # noqa: E402
 from .tasks import STUDY_CONDITIONS, STUDY_TASKS, TASKS  # noqa: E402
 
@@ -31,7 +30,7 @@ EVENT_TYPES = {
     "session_start", "writing_start", "next_task", "view", "pin", "unpin", "confirm", "correct_start", "correct_submit",
     "correct_redo", "correct_fail", "undo", "session_end",
 }
-# Written by the server only: draft_submit, enhance_done, enhance_fail.
+# Written by the server only: assigned, draft_submit, enhance_done, enhance_fail.
 
 
 def now() -> str:
@@ -130,6 +129,13 @@ def get_session(session_id: str, request: Request, t: str | None = None):
     with db.connect() as conn:
         s = load_session(conn, session_id)
         role = auth.session_role(request, s, t)
+        if role == "participant" and s.get("group_id") and not s["task_id"]:
+            # First open of this participant's link: assign task order and conditions now.
+            assigned = assignment.assign_group(conn, s["group_id"])
+            s = load_session(conn, session_id)
+            if assigned:
+                insert_event(conn, s, "assigned", role, payload={
+                    "tasks": [t_ for t_, _ in assigned], "conditions": [c for _, c in assigned]})
         return participant_view(conn, s, role)
 
 
@@ -272,7 +278,7 @@ def start_demo():
     if not demo_enabled():
         raise HTTPException(status_code=404, detail="Demo mode is off (set COWRITE_DEMO=1 in backend/.env).")
     with db.connect() as conn:
-        s = insert_task_sequence(conn, f"demo-{secrets.token_hex(2)}")[0]
+        s = insert_task_sequence(conn, f"demo-{secrets.token_hex(2)}", demo=True)[0]
         return {"id": s["id"], "token": s["participant_token"]}
 
 
@@ -302,6 +308,8 @@ def session_summary(conn, s: dict) -> dict:
         "groupId": s.get("group_id"),
         "seq": s.get("seq"),
         "condition": s.get("condition"),
+        "assignedAt": s.get("assigned_at"),
+        "demo": bool(s.get("demo")),
     }
 
 
@@ -310,7 +318,7 @@ def insert_session(conn, **fields) -> dict:
         "id": secrets.token_hex(4), "task_id": None, "draft": "", "original": None, "revised": None,
         "segments": None, "edits": None, "meta": {}, "source_id": None, "warnings": [],
         "participant_token": auth.new_participant_token(), "created_at": now(), "enhanced_at": None,
-        "group_id": None, "seq": None, "condition": None, **fields,
+        "group_id": None, "seq": None, "condition": None, "assigned_at": None, "demo": 0, **fields,
     }
     cols = list(s)
     conn.execute(
@@ -329,42 +337,24 @@ def list_sessions():
             "tasks": {k: v["title"] for k, v in TASKS.items()},
             "studyTasks": STUDY_TASKS,
             "studyConditions": STUDY_CONDITIONS,
+            "balance": assignment.balance_report(conn),
             "aiConfigured": bool(llm.configured_providers()),
             "aiModel": " → ".join(f"{p['name']}:{p['model']}" for p in llm.configured_providers()),
         }
 
 
-Assignment = tuple[tuple[str, str], ...]  # ((task_id, condition), ...) in the order they are written
-
-
-def pick_assignment(conn) -> Assignment:
-    """Task order and which task gets which explanation condition, randomized and counterbalanced.
-
-    The candidates are every task order crossed with every condition order (2 x 2 = 4 for two tasks).
-    Each participant gets a random choice among the candidates used least so far, so every block of
-    four participants covers all four once: each task comes first and gets explanations equally often.
-    """
-    candidates = [tuple(zip(tasks, conds)) for tasks in itertools.permutations(STUDY_TASKS)
-                  for conds in itertools.permutations(STUDY_CONDITIONS)]
-    groups: dict[str, list[tuple[str, str]]] = {}
-    for r in conn.execute("SELECT group_id, task_id, condition FROM sessions WHERE group_id IS NOT NULL ORDER BY group_id, seq"):
-        groups.setdefault(r["group_id"], []).append((r["task_id"], r["condition"]))
-    used = {c: 0 for c in candidates}
-    for rows in groups.values():
-        if tuple(rows) in used:
-            used[tuple(rows)] += 1
-    fewest = min(used.values())
-    return secrets.choice([c for c in candidates if used[c] == fewest])
-
-
-def insert_task_sequence(conn, participant_id: str) -> list[dict]:
-    """One writing session per study task, linked by group_id, with a counterbalanced random assignment."""
+def insert_task_sequence(conn, participant_id: str, *, demo: bool = False) -> list[dict]:
+    """One writing session per study task, linked by group_id. Tasks and conditions are left empty
+    until the participant first opens their link (see assignment.py); demo groups are assigned now."""
     group = secrets.token_hex(4)
-    return [
-        insert_session(conn, participant_id=participant_id, task_id=task_id, source="task", stage="writing",
-                       group_id=group, seq=n, condition=condition)
-        for n, (task_id, condition) in enumerate(pick_assignment(conn), start=1)
+    sessions = [
+        insert_session(conn, participant_id=participant_id, task_id=None, source="task", stage="writing",
+                       group_id=group, seq=n, demo=int(demo))
+        for n in range(1, len(STUDY_TASKS) + 1)
     ]
+    if demo:
+        assignment.assign_group(conn, group, demo=True)
+    return sessions
 
 
 class CreateBody(BaseModel):

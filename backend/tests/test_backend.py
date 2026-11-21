@@ -17,7 +17,9 @@ from app import llm  # noqa: E402
 from app.diffing import diff_spans, tokenize  # noqa: E402
 from app.importer import build_content  # noqa: E402
 from app.main import app  # noqa: E402
-from app.tasks import TASKS  # noqa: E402
+from app import db  # noqa: E402
+from app.assignment import candidates  # noqa: E402
+from app.tasks import STUDY_CONDITIONS, STUDY_TASKS, TASKS  # noqa: E402
 
 SAMPLE = json.loads((Path(__file__).resolve().parents[2] / "sample_data" / "sample_revisions.json").read_text())
 
@@ -147,7 +149,7 @@ def test_task_flow_and_permissions(monkeypatch):
 
     exported = c.get("/api/admin/export", params={"sessionId": s["id"]}).json()["sessions"][0]
     types = [e["type"] for e in exported["events"]]
-    assert types == ["draft_submit", "enhance_fail", "draft_submit", "enhance_done"]
+    assert types == ["assigned", "draft_submit", "enhance_fail", "draft_submit", "enhance_done"]
     assert exported["meta"]["rawResponse"]
     assert "edit_kind" in c.get("/api/admin/export", params={"format": "csv"}).text.splitlines()[0]
 
@@ -196,41 +198,56 @@ def test_demo_and_link_role(monkeypatch):
     assert c.get(f"/api/sessions/{d['id']}").json()["role"] == "admin"
 
 
-def test_each_participant_gets_every_task_in_balanced_random_order(monkeypatch):
+def fresh_db():
+    with db.connect() as conn:
+        conn.execute("DELETE FROM sessions")
+
+
+def admin_client():
     c = TestClient(app)
     c.post("/api/auth/login", json={"password": "pw"})
-    pids = [f"S{n:02d}" for n in range(10)]
-    created = c.post("/api/admin/sessions", json={"participantIds": pids}).json()["created"]
-    assert len(created) == 20
-    orders = {}
-    for s in created:
-        orders.setdefault(s["groupId"], []).append((s["seq"], s["taskId"], s["participantId"]))
-    assert len(orders) == 10
-    seen = []
-    for rows in orders.values():
-        rows.sort()
-        assert [r[0] for r in rows] == [1, 2] and len({r[2] for r in rows}) == 1
-        assert sorted(r[1] for r in rows) == ["client_apology", "energy_job_inquiry"]
-        seen.append(tuple(r[1] for r in rows))
-    # Balanced across everyone created so far (other tests share this database), not just this batch:
-    # the four (task order x condition order) assignments are used within one of each other.
-    everyone = {}
-    for s in c.get("/api/admin/sessions").json()["sessions"]:
-        if s["groupId"]:
-            everyone.setdefault(s["groupId"], []).append((s["seq"], s["taskId"], s["condition"]))
-    assignments = [tuple((t, cond) for _, t, cond in sorted(rows)) for rows in everyone.values()]
-    counts = [assignments.count(a) for a in set(assignments)]
-    assert len(set(assignments)) == 4 and max(counts) - min(counts) <= 1
-    for a in assignments:
-        assert sorted(cond for _, cond in a) == ["noReasons", "reasons"]  # one task with, one without
-    assert len(set(seen)) == 2
+    return c
 
-    first, second = sorted(next(iter(orders.values())))[:2]
-    s1 = next(s for s in created if s["participantId"] == first[2] and s["seq"] == 1)
-    s2 = next(s for s in created if s["participantId"] == first[2] and s["seq"] == 2)
+
+def create_and_open(c, pids):
+    """Creates participants and opens each one's task 1 link. Returns {participantId: [view of task 1, summary...]}."""
+    created = c.post("/api/admin/sessions", json={"participantIds": pids}).json()["created"]
+    for s in created:
+        if s["seq"] == 1:
+            TestClient(app).get(f"/api/sessions/{s['id']}", params={"t": s["token"]})
+    return created
+
+
+def assignments(c):
+    """{groupId: ((taskId, condition), ...)} for assigned groups, from the admin listing."""
+    groups = {}
+    for s in c.get("/api/admin/sessions").json()["sessions"]:
+        if s["groupId"] and s["taskId"]:
+            groups.setdefault(s["groupId"], []).append((s["seq"], s["taskId"], s["condition"]))
+    return {g: tuple((t, cond) for _, t, cond in sorted(rows)) for g, rows in groups.items()}
+
+
+def test_sequence_is_assigned_on_first_open_and_linked(monkeypatch):
+    fresh_db()
+    c = admin_client()
+    created = c.post("/api/admin/sessions", json={"participantIds": ["P01"]}).json()["created"]
+    assert len(created) == 2 and all(s["taskId"] is None and s["condition"] is None for s in created)
+    s1, s2 = sorted(created, key=lambda s: s["seq"])
+    # The researcher opening the session doesn't assign it.
+    assert c.get(f"/api/sessions/{s1['id']}").json()["task"] is None
+    assert assignments(c) == {}
+
     p = TestClient(app)
     view = p.get(f"/api/sessions/{s1['id']}", params={"t": s1["token"]}).json()
-    assert view["sequence"] == {"index": 1, "total": 2, "next": None}  # no link onward before review
+    assert view["task"]["id"] in TASKS and view["sequence"] == {"index": 1, "total": 2, "next": None}
+    (a,) = assignments(c).values()
+    assert sorted(t for t, _ in a) == sorted(STUDY_TASKS) and sorted(cond for _, cond in a) == sorted(STUDY_CONDITIONS)
+    # Opening again doesn't reassign.
+    p.get(f"/api/sessions/{s1['id']}", params={"t": s1["token"]})
+    assert list(assignments(c).values()) == [a]
+    events = c.get("/api/admin/export", params={"sessionId": s1["id"]}).json()["sessions"][0]["events"]
+    assert [e["type"] for e in events] == ["assigned"]
+    assert events[0]["payload"] == {"tasks": [t for t, _ in a], "conditions": [cond for _, cond in a]}
 
     long_draft = DRAFT + " " + "More words here. " * 10
     revised = REVISED + " " + "More words here. " * 10
@@ -241,13 +258,68 @@ def test_each_participant_gets_every_task_in_balanced_random_order(monkeypatch):
     view = p.post(f"/api/sessions/{s1['id']}/enhance", params={"t": s1["token"]}, json={"text": long_draft}).json()
     assert view["sequence"]["next"] == {"id": s2["id"], "token": s2["token"]}
     last = p.get(f"/api/sessions/{s2['id']}", params={"t": s2["token"]}).json()
-    assert last["sequence"]["index"] == 2 and last["sequence"]["next"] is None
+    assert last["task"]["id"] == a[1][0] and last["sequence"]["index"] == 2 and last["sequence"]["next"] is None
 
     assert p.post(f"/api/sessions/{s1['id']}/events", params={"t": s1["token"]},
                   json={"events": [{"ts": "x", "type": "paste", "payload": {"chars": 5}},
                                    {"ts": "x", "type": "next_task"}]}).json()["stored"] == 1  # paste is not stored
     header = c.get("/api/admin/export", params={"format": "csv"}).text.splitlines()[0]
-    assert "group_id" in header and "task_seq" in header
+    assert "group_id" in header and "task_seq" in header and "condition" in header
+
+
+def test_assignments_are_balanced_and_unopened_links_take_no_slot():
+    fresh_db()
+    c = admin_client()
+    c.post("/api/admin/sessions", json={"participantIds": ["U1", "U2", "U3"]})  # never opened
+    create_and_open(c, [f"S{n}" for n in range(8)])
+    got = list(assignments(c).values())
+    assert len(got) == 8 and all(got.count(x) == 2 for x in candidates())  # every block of 4 covers all 4
+    balance = c.get("/api/admin/sessions").json()["balance"]
+    assert balance["unopened"] == 3
+    assert [cell["in_progress"] for cell in balance["cells"]] == [2, 2, 2, 2]
+    # Each scenario is written with and without explanations equally often.
+    assert {(x["taskId"], x["condition"]): x["in_progress"] for x in balance["byTaskCondition"]} == {
+        (t, cond): 4 for t in STUDY_TASKS for cond in STUDY_CONDITIONS}
+
+
+def test_balance_ignores_abandoned_and_demo_participants(monkeypatch):
+    fresh_db()
+    c = admin_client()
+    create_and_open(c, ["A", "B", "C", "D"])
+    by_group = assignments(c)
+    assert sorted(by_group.values()) == sorted(candidates())
+    gx, gy = list(by_group)[:2]
+    old = "2000-01-01T00:00:00.000+00:00"
+    with db.connect() as conn:
+        # X started long ago and never finished: abandoned, its slot opens up again.
+        conn.execute("UPDATE sessions SET assigned_at = ? WHERE group_id = ?", (old, gx))
+        # Y also started long ago but finished (every task in review, nothing left to decide): still counts.
+        conn.execute("UPDATE sessions SET assigned_at = ?, stage = 'review', edits = '{}' WHERE group_id = ?", (old, gy))
+    balance = c.get("/api/admin/sessions").json()["balance"]
+    assert balance["groups"][gx] == "abandoned" and balance["groups"][gy] == "completed"
+
+    monkeypatch.setenv("COWRITE_DEMO", "1")
+    for _ in range(3):
+        c.post("/api/demo")  # demos are assigned at once but never count
+    assert c.get("/api/admin/sessions").json()["balance"]["cells"] == balance["cells"]
+
+    create_and_open(c, ["E"])
+    e_group = next(s["groupId"] for s in c.get("/api/admin/sessions").json()["sessions"] if s["participantId"] == "E")
+    assert assignments(c)[e_group] == by_group[gx]  # the only least-used slot is the abandoned one
+
+
+def test_concurrent_first_opens_stay_balanced():
+    from concurrent.futures import ThreadPoolExecutor
+
+    fresh_db()
+    c = admin_client()
+    created = [s for s in c.post("/api/admin/sessions", json={"participantIds": [f"T{n}" for n in range(8)]}).json()["created"]
+               if s["seq"] == 1]
+    with ThreadPoolExecutor(8) as pool:
+        codes = list(pool.map(lambda s: TestClient(app).get(f"/api/sessions/{s['id']}", params={"t": s["token"]}).status_code, created))
+    assert codes == [200] * 8
+    got = list(assignments(c).values())
+    assert all(got.count(x) == 2 for x in candidates())
 
 
 def test_single_task_sessions_for_piloting():

@@ -90,7 +90,11 @@ export function SessionPage() {
             {view.task ? (
               <WritingStage view={view} token={token} logger={logger} onChange={onChange} />
             ) : (
-              <p className="center-msg">This session has no writing task.</p>
+              <p className="center-msg">
+                {view.sequence
+                  ? 'Not assigned yet. The task order and conditions are assigned when the participant first opens their link.'
+                  : 'This session has no writing task.'}
+              </p>
             )}
           </main>
           {showAdmin && <AdminPanel view={view} />}
