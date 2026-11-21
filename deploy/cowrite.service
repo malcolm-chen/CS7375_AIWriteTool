@@ -1,0 +1,29 @@
+# systemd unit for CoWrite. Install with deploy/install.sh, or by hand:
+#   sudo cp deploy/cowrite.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#   sudo systemctl enable --now cowrite
+# Assumes the repo is at /srv/cowrite and owned by the user "cowrite"; change both below if not.
+
+[Unit]
+Description=CoWrite revision review study server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=cowrite
+WorkingDirectory=/srv/cowrite/backend
+# Settings (API keys, passwords, COWRITE_PRODUCTION=1) come from backend/.env, which the app loads itself.
+# One worker on purpose: balanced assignment relies on a single SQLite file.
+# Bound to localhost only; Cloudflare Tunnel or Caddy is the public entry point.
+ExecStart=/srv/cowrite/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=always
+RestartSec=3
+
+# Hardening: the app only needs to write its database directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/cowrite/backend/data
+
+[Install]
+WantedBy=multi-user.target

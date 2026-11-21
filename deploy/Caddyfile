@@ -1,0 +1,12 @@
+# Only if university IT gives the machine a public hostname with ports 80/443 open.
+# Otherwise use Cloudflare Tunnel (deploy/README.md). Caddy gets the HTTPS certificate itself.
+# Replace the hostname, then: sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
+
+cowrite.example.edu {
+	reverse_proxy 127.0.0.1:8000 {
+		# "Revise with AI" waits for the model; don't cut it off.
+		transport http {
+			read_timeout 10m
+		}
+	}
+}

@@ -23,6 +23,7 @@ from . import assignment, auth, db, llm  # noqa: E402
 from .importer import RecordError, build_content, iter_records  # noqa: E402
 from .tasks import STUDY_CONDITIONS, STUDY_TASKS, TASKS  # noqa: E402
 
+auth.check_production_config()
 app = FastAPI(title="CoWrite revision review")
 db.init()
 
@@ -110,13 +111,14 @@ class LoginBody(BaseModel):
 def login(body: LoginBody, response: Response):
     if not auth.check_password(body.password):
         raise HTTPException(status_code=401, detail="Wrong password.")
-    response.set_cookie(auth.COOKIE, auth.admin_cookie_value(), httponly=True, samesite="lax", max_age=auth.TTL_SECONDS)
+    response.set_cookie(auth.COOKIE, auth.admin_cookie_value(), httponly=True, samesite="lax", max_age=auth.TTL_SECONDS,
+                        secure=auth.PRODUCTION)
     return {"role": "admin"}
 
 
 @app.post("/api/auth/logout")
 def logout(response: Response):
-    response.delete_cookie(auth.COOKIE)
+    response.delete_cookie(auth.COOKIE, httponly=True, samesite="lax", secure=auth.PRODUCTION)
     return {"role": None}
 
 
