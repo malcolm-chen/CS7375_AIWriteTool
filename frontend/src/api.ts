@@ -1,4 +1,4 @@
-import type { AnyView, Decision, EventType, SessionSummary } from './types';
+import type { AnyView, BalanceReport, Decision, EventType, SessionSummary } from './types';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -56,6 +56,7 @@ export const api = {
       tasks: Record<string, string>;
       studyTasks: string[];
       studyConditions: string[];
+      balance: BalanceReport;
       aiConfigured: boolean;
       aiModel: string;
     }>(

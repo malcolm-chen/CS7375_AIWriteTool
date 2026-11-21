@@ -85,4 +85,17 @@ export interface SessionSummary {
   seq: number | null;
   /** 'noReasons': explanations are withheld from the participant. null shows them. */
   condition: 'reasons' | 'noReasons' | null;
+  /** When the participant first opened their link and got their task order and conditions. */
+  assignedAt: string | null;
+  demo: boolean;
+}
+
+export type GroupStatus = 'unassigned' | 'in_progress' | 'completed' | 'abandoned';
+
+export interface BalanceReport {
+  cells: { assignment: { taskId: string; condition: string }[]; completed: number; in_progress: number; abandoned: number }[];
+  byTaskCondition: { taskId: string; condition: string; completed: number; in_progress: number }[];
+  unopened: number;
+  abandonHours: number;
+  groups: Record<string, GroupStatus>;
 }
