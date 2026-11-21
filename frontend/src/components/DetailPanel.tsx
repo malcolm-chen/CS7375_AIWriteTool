@@ -91,7 +91,10 @@ export function DetailPanel({ pos }: { pos: { top: number; left: number; width: 
     >
       {locked === edit.id && <p className={styles.lockhint}>{S.pinned}</p>}
       <DiffLine edit={edit} />
-      <p className={styles.reason}>{edit.explanation?.text ?? S.noReason}</p>
+      <div className={styles.reasonBox}>
+        <p className={styles.reasonLabel}>{edit.explanation ? S.reasonLabel : S.noReasonLabel}</p>
+        <p className={styles.reason}>{edit.explanation?.text ?? S.noReason}</p>
+      </div>
       {decision ? <Result edit={edit} decision={decision} /> : <Actions key={edit.id} editId={edit.id} />}
       {error === 'save' && <p className="err" role="alert">{S.saveFailed}</p>}
     </div>

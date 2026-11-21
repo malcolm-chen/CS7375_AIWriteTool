@@ -24,6 +24,10 @@ export const S = {
   start: 'Start',
   next: 'Next edit',
   noReason: 'Does this edit match what you meant?',
+  // Labels above the reason line. Both conditions get one, in the same place and style, so the
+  // only difference between them is the content.
+  reasonLabel: 'Why the AI made this change',
+  noReasonLabel: 'Check this edit',
   ok: 'Matches what I meant',
   hold: 'Hold and say what you meant',
   listening: 'Listening, release to stop',
