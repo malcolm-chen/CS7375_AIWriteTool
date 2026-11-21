@@ -126,6 +126,32 @@ To back up by hand, e.g. right before a session: `backend/.venv/bin/python deplo
 
 **Copy the backups off the machine regularly**, for example to university storage approved for study data. A backup on the same disk doesn't help if that disk fails. To restore, stop the server, copy a backup over `backend/data/cowrite.db`, then start the server again.
 
+## Updating
+
+When new code is merged to `main`:
+
+```bash
+sudo -iu cowrite
+cd /srv/cowrite
+backend/.venv/bin/python deploy/backup.py      # back up first
+git pull
+./deploy/install.sh                            # tests, rebuild, restart
+```
+
+If participants are mid-session, avoid updating. A restart takes a few seconds and drafts are saved, but a request that is running at that moment (such as "Revise with AI") fails and has to be retried.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| Site doesn't load / Cloudflare 502 | `systemctl status cowrite`, then `journalctl -u cowrite -n 50`. Is the server running on `127.0.0.1:8000`? Try `curl http://127.0.0.1:8000/api/auth/me` on the machine. |
+| Server won't start: "COWRITE_PRODUCTION is on, but …" | The message lists what to fix in `backend/.env`: the default password or secret, a value that's too short, or demo mode left on. Fix it, then `sudo systemctl restart cowrite`. |
+| "Revise with AI" fails for everyone | The admin page says whether an AI provider is configured. Check the API keys in `backend/.env`. The `enhance_fail` events in the export include the provider's error message. |
+| "Revise with AI" fails only after about 100 s | The Cloudflare timeout (see "Timeouts" above). Lower `<NAME>_TIMEOUT`. |
+| Microphone doesn't work | The page must be opened over HTTPS, in Chrome or Edge. Other browsers fall back to typing. |
+| Edited `backend/.env` but nothing changed | Restart: `sudo systemctl restart cowrite`. |
+| A participant's link says "not valid" | The link was regenerated ("New link" on `/admin`), or it was copied incompletely. Send them the current link from their "Task 1" row. |
+
 ## Before the first real participant
 
 - [ ] `https://<your host>/admin` loads, and you can log in with the new password.
