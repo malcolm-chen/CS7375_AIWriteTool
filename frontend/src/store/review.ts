@@ -110,8 +110,8 @@ export const useReview = create<ReviewState>((set, get) => ({
 
   openText() {
     const id = get().active;
-    if (!id) return;
-    set({ textOpen: true });
+    if (!id || get().recording) return;
+    set({ textOpen: true, pending: null }); // typing replaces an unconfirmed voice transcript
     get().log('correct_start', id, { modality: 'text' });
   },
 
