@@ -39,7 +39,7 @@ TASKS: dict[str, dict] = {
 
 DEFAULT_TASK = "energy_job_inquiry"
 
-# Every participant writes all of these, in an order randomized per participant (see main.pick_assignment).
+# Every participant writes all of these, in an order randomized per participant (see assignment.py).
 STUDY_TASKS = ["energy_job_inquiry", "client_apology"]
 
 # Explanation conditions, one per task for each participant. Which task gets which condition is

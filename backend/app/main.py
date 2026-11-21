@@ -57,9 +57,10 @@ def word_count(text: str) -> int:
     return len(text.split())
 
 
-def sequence_info(conn, s: dict) -> dict | None:
+def sequence_info(conn, s: dict, role: str) -> dict | None:
     """Position in the participant's task order. The next task's link is only handed out once this
-    session has reached review, so a participant can't skip ahead."""
+    session has reached review, so a participant can't skip ahead, and only to the participant: it
+    carries their token, and an admin following it would act as them in their real next task."""
     if not s.get("group_id"):
         return None
     rows = conn.execute("SELECT id, seq, participant_token FROM sessions WHERE group_id = ? ORDER BY seq",
@@ -68,7 +69,8 @@ def sequence_info(conn, s: dict) -> dict | None:
     return {
         "index": s["seq"],
         "total": len(rows),
-        "next": {"id": nxt["id"], "token": nxt["participant_token"]} if nxt and s["stage"] == "review" else None,
+        "next": ({"id": nxt["id"], "token": nxt["participant_token"]}
+                 if nxt and s["stage"] == "review" and role == "participant" else None),
     }
 
 
@@ -80,7 +82,7 @@ def participant_view(conn, s: dict, role: str) -> dict:
         "stage": s["stage"],
         "task": TASKS.get(s["task_id"] or ""),
         "role": role,
-        "sequence": sequence_info(conn, s),
+        "sequence": sequence_info(conn, s, role),
     }
     if s["stage"] != "review":
         view["draft"] = s["draft"]
@@ -88,7 +90,8 @@ def participant_view(conn, s: dict, role: str) -> dict:
     edits = {eid: {k: v for k, v in e.items() if k != "judge"} for eid, e in s["edits"].items()}
     if s.get("condition") == "noReasons":
         # Withheld here, not just hidden in the UI, so the explanations never reach the browser.
-        edits = {eid: {**e, "explanation": None} for eid, e in edits.items()}
+        # changeIndex would reveal which edits share an explanation.
+        edits = {eid: {**{k: v for k, v in e.items() if k != "changeIndex"}, "explanation": None} for eid, e in edits.items()}
     decisions = {
         r["edit_id"]: {"editId": r["edit_id"], "type": r["type"], "modality": r["modality"], "text": r["text"], "ts": r["ts"]}
         for r in conn.execute("SELECT * FROM decisions WHERE session_id = ?", (s["id"],))
@@ -131,7 +134,10 @@ def get_session(session_id: str, request: Request, t: str | None = None):
         role = auth.session_role(request, s, t)
         if role == "participant" and s.get("group_id") and not s["task_id"]:
             # First open of this participant's link: assign task order and conditions now.
-            assigned = assignment.assign_group(conn, s["group_id"])
+            try:
+                assigned = assignment.assign_group(conn, s["group_id"])
+            except assignment.IncompleteGroup:
+                raise HTTPException(status_code=409, detail="This link is incomplete. Ask the researcher for a new one.")
             s = load_session(conn, session_id)
             if assigned:
                 insert_event(conn, s, "assigned", role, payload={
@@ -361,15 +367,15 @@ class CreateBody(BaseModel):
     participantIds: list[str] = Field(min_length=1, max_length=500)
     # None: every study task in a random order (the study setup). A task id: that task alone (for piloting).
     taskId: str | None = None
-    # Only with taskId: the explanation condition for that single session (default: explanations shown).
-    condition: str | None = None
+    # Only with taskId: the explanation condition for that single session.
+    condition: str = "reasons"
 
 
 @app.post("/api/admin/sessions", dependencies=[Depends(auth.require_admin)])
 def create_sessions(body: CreateBody):
     if body.taskId is not None and body.taskId not in TASKS:
         raise HTTPException(status_code=400, detail=f"Unknown task {body.taskId!r}.")
-    if body.condition is not None and body.condition not in STUDY_CONDITIONS:
+    if body.condition not in STUDY_CONDITIONS:
         raise HTTPException(status_code=400, detail=f"Unknown condition {body.condition!r}.")
     with db.connect() as conn:
         created = []
@@ -425,7 +431,8 @@ def reset_session(session_id: str):
     with db.connect() as conn:
         s = load_session(conn, session_id)
         conn.execute("DELETE FROM decisions WHERE session_id = ?", (session_id,))
-        conn.execute("DELETE FROM events WHERE session_id = ?", (session_id,))
+        # The assignment survives a reset, so its record does too.
+        conn.execute("DELETE FROM events WHERE session_id = ? AND type != 'assigned'", (session_id,))
         if s["source"] == "task":
             conn.execute(
                 "UPDATE sessions SET stage = 'writing', draft = '', original = NULL, revised = NULL, segments = NULL,"
@@ -444,9 +451,14 @@ def regenerate_link(session_id: str):
 
 @app.delete("/api/admin/sessions/{session_id}", dependencies=[Depends(auth.require_admin)])
 def delete_session(session_id: str):
+    """Deletes the session, or for a participant with several tasks, all of their sessions: a group
+    with a task missing can't be assigned and would skew the balance counts."""
     with db.connect() as conn:
-        load_session(conn, session_id)
-        conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        s = load_session(conn, session_id)
+        if s.get("group_id"):
+            conn.execute("DELETE FROM sessions WHERE group_id = ?", (s["group_id"],))
+        else:
+            conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         return {"ok": True}
 
 

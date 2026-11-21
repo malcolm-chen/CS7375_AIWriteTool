@@ -355,3 +355,59 @@ def test_no_reasons_condition_withholds_explanations(monkeypatch):
     assert exported["condition"] == "noReasons" and all(e["explanation"] for e in exported["edits"].values())
     assert c.post("/api/admin/sessions", json={"participantIds": ["x"], "taskId": "client_apology",
                                                "condition": "bogus"}).status_code == 400
+
+
+def test_review_fixes(monkeypatch):
+    fresh_db()
+    c = admin_client()
+    # Full-sequence creation from the admin page sends no condition.
+    created = c.post("/api/admin/sessions", json={"participantIds": ["R1", "R2"], "taskId": None}).json()["created"]
+    r1 = sorted((s for s in created if s["participantId"] == "R1"), key=lambda s: s["seq"])
+    r2 = sorted((s for s in created if s["participantId"] == "R2"), key=lambda s: s["seq"])
+
+    # The next task's token goes to the participant only, never to an admin preview.
+    p = TestClient(app)
+    p.get(f"/api/sessions/{r1[0]['id']}", params={"t": r1[0]["token"]})
+    with db.connect() as conn:
+        conn.execute("UPDATE sessions SET stage = 'review', original = 'a', revised = 'a', segments = '[]', edits = '{}'"
+                     " WHERE id = ?", (r1[0]["id"],))
+    assert p.get(f"/api/sessions/{r1[0]['id']}", params={"t": r1[0]["token"]}).json()["sequence"]["next"]["id"] == r1[1]["id"]
+    assert c.get(f"/api/sessions/{r1[0]['id']}").json()["sequence"]["next"] is None
+
+    # Reset keeps the assignment record.
+    c.post(f"/api/admin/sessions/{r1[0]['id']}/reset")
+    events = c.get("/api/admin/export", params={"sessionId": r1[0]["id"]}).json()["sessions"][0]["events"]
+    assert [e["type"] for e in events] == ["assigned"]
+
+    # Deleting one task of a participant deletes all of their tasks.
+    c.delete(f"/api/admin/sessions/{r2[1]['id']}")
+    assert TestClient(app).get(f"/api/sessions/{r2[0]['id']}", params={"t": r2[0]["token"]}).status_code == 404
+
+    # A group missing a task gets a clear error, not a crash, and isn't counted as an unopened link.
+    created = c.post("/api/admin/sessions", json={"participantIds": ["R3"]}).json()["created"]
+    with db.connect() as conn:
+        conn.execute("DELETE FROM sessions WHERE id = ?", (next(s["id"] for s in created if s["seq"] == 2),))
+    s1 = next(s for s in created if s["seq"] == 1)
+    assert TestClient(app).get(f"/api/sessions/{s1['id']}", params={"t": s1["token"]}).status_code == 409
+    balance = c.get("/api/admin/sessions").json()["balance"]
+    assert balance["groups"][s1["groupId"]] == "invalid" and balance["unopened"] == 0
+
+    # Pilot sessions record their condition; a bad abandonment setting falls back to 24 h.
+    pilot = c.post("/api/admin/sessions", json={"participantIds": ["X"], "taskId": "client_apology"}).json()["created"][0]
+    assert pilot["condition"] == "reasons"
+    monkeypatch.setenv("COWRITE_ABANDON_HOURS", "abc")
+    assert c.get("/api/admin/sessions").json()["balance"]["abandonHours"] == 24
+
+
+def test_no_reasons_hides_change_index(monkeypatch):
+    fresh_db()
+    c = admin_client()
+    s = c.post("/api/admin/sessions", json={"participantIds": ["N"], "taskId": "client_apology",
+                                            "condition": "noReasons"}).json()["created"][0]
+    monkeypatch.setattr(llm.httpx, "post", FakeKimi([
+        {"revised": (REVISED + " " + "More words here. " * 10).strip(), "changes": CHANGES},
+        {"changes": [{"id": "1", "type": "content", "explanation": "x"}]},
+    ]))
+    view = TestClient(app).post(f"/api/sessions/{s['id']}/enhance", params={"t": s["token"]},
+                                json={"text": DRAFT + " " + "More words here. " * 10}).json()
+    assert all("changeIndex" not in e and e["explanation"] is None for e in view["edits"].values())

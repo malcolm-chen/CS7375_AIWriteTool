@@ -66,7 +66,7 @@ export const api = {
   createSessions: (participantIds: string[], taskId: string | null, condition: string | null = null) =>
     request<{ created: SessionSummary[] }>('/api/admin/sessions', {
       method: 'POST',
-      body: JSON.stringify({ participantIds, taskId, condition }),
+      body: JSON.stringify({ participantIds, taskId, ...(condition ? { condition } : {}) }),
     }),
   importData: (data: unknown) =>
     request<{ created: SessionSummary[]; failed: { index: number; sourceId: string | null; error: string }[] }>(

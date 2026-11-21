@@ -4,6 +4,8 @@ export const S = {
   stepWrite: 'Step 1 of 2 · Write',
   stepReview: 'Step 2 of 2 · Review',
   taskOf: (n: number, total: number) => `Task ${n} of ${total}`,
+  write: 'Write',
+  review: 'Review',
   original: 'Your original',
   revised: 'AI revision',
   aiEdit: 'AI edit',

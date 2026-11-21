@@ -11,6 +11,7 @@ const GROUP_STATUS: Record<GroupStatus, string> = {
   in_progress: 'In progress',
   completed: 'Completed',
   abandoned: 'Abandoned, not counted',
+  invalid: 'Incomplete task set, can’t be assigned',
 };
 
 /** How many participants are in each assignment, so the researcher can see the study stays balanced. */
@@ -277,7 +278,14 @@ function SessionRow({ s, tasks, status, onChange }: {
           <a className="btn small" href={api.exportUrl('csv', s.id)}>CSV</a>
           <button className="btn small" onClick={() => act(() => api.regenerateLink(s.id), 'Create a new participant link? The old link stops working.')}>New link</button>
           <button className="btn small" onClick={() => act(() => api.reset(s.id), 'Reset this session? Decisions and events are cleared; task sessions also go back to an empty draft.')}>Reset</button>
-          <button className="btn small danger" onClick={() => act(() => api.remove(s.id), 'Delete this session and all its data?')}>Delete</button>
+          <button
+            className="btn small danger"
+            onClick={() => act(() => api.remove(s.id), s.groupId
+              ? `Delete participant ${s.participantId}? All of their task sessions and data are deleted.`
+              : 'Delete this session and all its data?')}
+          >
+            Delete
+          </button>
         </div>
       </td>
     </tr>
