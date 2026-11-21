@@ -90,7 +90,7 @@ export interface SessionSummary {
   demo: boolean;
 }
 
-export type GroupStatus = 'unassigned' | 'in_progress' | 'completed' | 'abandoned';
+export type GroupStatus = 'unassigned' | 'in_progress' | 'completed' | 'abandoned' | 'invalid';
 
 export interface BalanceReport {
   cells: { assignment: { taskId: string; condition: string }[]; completed: number; in_progress: number; abandoned: number }[];

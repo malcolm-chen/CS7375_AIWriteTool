@@ -24,8 +24,16 @@ Assignment = tuple[tuple[str, str], ...]  # ((task_id, condition), ...) in the o
 COUNTED = ("completed", "in_progress")
 
 
+class IncompleteGroup(RuntimeError):
+    """The group doesn't have one session per study task (e.g. STUDY_TASKS changed after it was created)."""
+
+
 def abandon_hours() -> float:
-    return float(os.environ.get("COWRITE_ABANDON_HOURS") or 24)
+    try:
+        hours = float(os.environ.get("COWRITE_ABANDON_HOURS") or 24)
+    except ValueError:
+        return 24.0
+    return hours if hours > 0 else 24.0
 
 
 def candidates() -> list[Assignment]:
@@ -56,7 +64,8 @@ def group_statuses(conn) -> dict[str, dict]:
     for gid, rows in groups.items():
         info = {"participantId": rows[0]["participant_id"], "demo": bool(rows[0]["demo"]), "assignment": None}
         if not all(r["task_id"] for r in rows):
-            info["status"] = "unassigned"
+            # A group that can't be assigned isn't waiting to be opened.
+            info["status"] = "unassigned" if len(rows) == len(STUDY_TASKS) else "invalid"
         else:
             info["assignment"] = tuple((r["task_id"], r["condition"]) for r in rows)
             # Groups assigned before assigned_at existed fall back to their creation time.
@@ -94,7 +103,7 @@ def assign_group(conn, group_id: str, *, demo: bool = False) -> Assignment | Non
         return None
     assignment = secrets.choice(candidates()) if demo else pick(conn)
     if len(rows) != len(assignment):
-        raise RuntimeError(f"group {group_id} has {len(rows)} sessions but the study has {len(assignment)} tasks")
+        raise IncompleteGroup(f"group {group_id} has {len(rows)} sessions but the study has {len(assignment)} tasks")
     ts = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
     for r, (task_id, condition) in zip(rows, assignment):
         conn.execute("UPDATE sessions SET task_id = ?, condition = ?, assigned_at = ? WHERE id = ?",
