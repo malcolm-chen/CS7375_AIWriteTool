@@ -1,6 +1,6 @@
 """Command-line helpers.
 
-    python -m app.cli create P01 P02 P03 [--task energy_job_inquiry]
+    python -m app.cli create P01 P02 P03 [--task salary_negotiation]
     python -m app.cli import ../sample_data/sample_revisions.json
 """
 from __future__ import annotations

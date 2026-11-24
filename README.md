@@ -2,7 +2,7 @@
 
 A study tool for comparing what an AI says it changed with what the writer meant.
 
-Each participant writes **two short high-stakes emails**: a job inquiry after a layoff, and an apology to an upset client. For each one:
+Each participant writes **two short high-stakes emails**: negotiating the salary of their first job offer, and apologizing to a professor who vouched for them. For each one:
 
 1. **Write.** The participant reads the scenario and writes their own draft without AI help. Spellcheck is off.
 2. **Review.** "Revise with AI" sends the draft to an LLM, which revises it and explains each change. The participant sees their original and the revision side by side, with every change highlighted except grammar and spelling fixes. They go through the changes one by one and either confirm each one ("Matches what I meant") or say or type what they actually meant.
@@ -114,8 +114,8 @@ Settings go in `backend/.env` (template: `backend/.env.example`). Restart the se
 ## Study design
 
 - **Tasks** live in `backend/app/tasks.py`. Each has a title, scenario, assignment and a minimum word count (40).
-  - `energy_job_inquiry`: after a layoff, email the hiring inbox of a company where you know no one.
-  - `client_apology`: apologize to an upset client's marketing director after your agency ran ads with the wrong discount.
+  - `salary_negotiation`: reply to your first full-time offer and ask for a higher salary, without risking the offer.
+  - `professor_apology`: apologize to a professor who set up an internship introduction you missed.
 - **Conditions** (`STUDY_CONDITIONS` in `tasks.py`). Every participant writes every task in `STUDY_TASKS`, one in each condition:
   - `reasons`: hovering a change shows the AI's explanation, under the label "Why the AI made this change".
   - `noReasons`: the same box, labeled "Check this edit", shows "Does this edit match what you meant?" instead.

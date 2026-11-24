@@ -325,8 +325,8 @@ def test_concurrent_first_opens_stay_balanced():
 def test_single_task_sessions_for_piloting():
     c = TestClient(app)
     c.post("/api/auth/login", json={"password": "pw"})
-    created = c.post("/api/admin/sessions", json={"participantIds": ["pilot"], "taskId": "client_apology"}).json()["created"]
-    assert len(created) == 1 and created[0]["taskId"] == "client_apology" and created[0]["groupId"] is None
+    created = c.post("/api/admin/sessions", json={"participantIds": ["pilot"], "taskId": "professor_apology"}).json()["created"]
+    assert len(created) == 1 and created[0]["taskId"] == "professor_apology" and created[0]["groupId"] is None
 
 
 def test_no_reasons_condition_withholds_explanations(monkeypatch):
@@ -336,7 +336,7 @@ def test_no_reasons_condition_withholds_explanations(monkeypatch):
     revised = (REVISED + " " + "More words here. " * 10).strip()
     views = {}
     for cond in ("reasons", "noReasons"):
-        s = c.post("/api/admin/sessions", json={"participantIds": [f"pilot-{cond}"], "taskId": "client_apology",
+        s = c.post("/api/admin/sessions", json={"participantIds": [f"pilot-{cond}"], "taskId": "professor_apology",
                                                 "condition": cond}).json()["created"][0]
         assert s["condition"] == cond
         monkeypatch.setattr(llm.httpx, "post", FakeKimi([
@@ -353,7 +353,7 @@ def test_no_reasons_condition_withholds_explanations(monkeypatch):
     # Explanations are still generated and exported for analysis.
     exported = c.get("/api/admin/export", params={"sessionId": views["noReasons"][0]["id"]}).json()["sessions"][0]
     assert exported["condition"] == "noReasons" and all(e["explanation"] for e in exported["edits"].values())
-    assert c.post("/api/admin/sessions", json={"participantIds": ["x"], "taskId": "client_apology",
+    assert c.post("/api/admin/sessions", json={"participantIds": ["x"], "taskId": "professor_apology",
                                                "condition": "bogus"}).status_code == 400
 
 
@@ -393,7 +393,7 @@ def test_review_fixes(monkeypatch):
     assert balance["groups"][s1["groupId"]] == "invalid" and balance["unopened"] == 0
 
     # Pilot sessions record their condition; a bad abandonment setting falls back to 24 h.
-    pilot = c.post("/api/admin/sessions", json={"participantIds": ["X"], "taskId": "client_apology"}).json()["created"][0]
+    pilot = c.post("/api/admin/sessions", json={"participantIds": ["X"], "taskId": "professor_apology"}).json()["created"][0]
     assert pilot["condition"] == "reasons"
     monkeypatch.setenv("COWRITE_ABANDON_HOURS", "abc")
     assert c.get("/api/admin/sessions").json()["balance"]["abandonHours"] == 24
@@ -402,7 +402,7 @@ def test_review_fixes(monkeypatch):
 def test_no_reasons_hides_change_index(monkeypatch):
     fresh_db()
     c = admin_client()
-    s = c.post("/api/admin/sessions", json={"participantIds": ["N"], "taskId": "client_apology",
+    s = c.post("/api/admin/sessions", json={"participantIds": ["N"], "taskId": "professor_apology",
                                             "condition": "noReasons"}).json()["created"][0]
     monkeypatch.setattr(llm.httpx, "post", FakeKimi([
         {"revised": (REVISED + " " + "More words here. " * 10).strip(), "changes": CHANGES},
